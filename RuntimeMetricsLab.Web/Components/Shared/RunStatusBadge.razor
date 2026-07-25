@@ -1,0 +1,24 @@
+<span class="status-badge status-badge--@CssSuffix">
+    <span class="status-badge__dot" aria-hidden="true"></span>
+    @Label
+</span>
+
+@code {
+    [Parameter, EditorRequired]
+    public RunState Status { get; set; }
+
+    [Parameter]
+    public string? RawStatus { get; set; }
+
+    private string Label => string.IsNullOrWhiteSpace(RawStatus) ? Status.ToString() : RawStatus;
+
+    private string CssSuffix => Status switch
+    {
+        RunState.Pending => "pending",
+        RunState.Running => "running",
+        RunState.Completed => "completed",
+        RunState.Failed => "failed",
+        RunState.Cancelled => "cancelled",
+        _ => "unknown"
+    };
+}

@@ -1,0 +1,12 @@
+@* A reusable banner reminding readers that Blazor Server metrics describe the web host process, not the browser. *@
+
+<div class="host-notice" role="note" aria-label="Important scope note">
+    <span class="host-notice__icon" aria-hidden="true">i</span>
+    <div class="host-notice__body">
+        <strong>These metrics describe the server, not your browser.</strong>
+        RuntimeMetricsLab.Web runs Blazor in <em>Interactive Server</em> mode, so all UI logic executes on
+        the ASP.NET Core host. Every metric shown here — CPU time, GC/heap, thread pool, HTTP, sockets/TLS,
+        gRPC, and custom OpenTelemetry counters — reflects the <strong>webfrontend</strong> or
+        <strong>apiservice</strong> process on the server, never the browser tab's own CPU or memory usage.
+    </div>
+</div>

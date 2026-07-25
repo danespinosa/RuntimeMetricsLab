@@ -1,0 +1,396 @@
+@implements IDisposable
+@inject ExperimentsApiClient Api
+@inject RunTracker Tracker
+
+<article class="workbench">
+    <header class="workbench__header">
+        <h1><span class="bi @Info.IconClass" aria-hidden="true"></span> @Info.DisplayName</h1>
+        <p class="workbench__overview">@Info.Overview</p>
+    </header>
+
+    <HostMetricsNotice />
+
+    <ExerciseFlowExplainer Flow="@Info.Flow" />
+
+    <MetricExplainer Meter="@Info.Meter" Instruments="@Info.Instruments" />
+
+    <section class="workbench__connection" aria-live="polite">
+        @if (loadingExperiments)
+        {
+            <p class="alert alert-info">Checking the API service for a matching experiment…</p>
+        }
+        else if (experimentsResult is { Success: false })
+        {
+            <p class="alert alert-warning">
+                Couldn't confirm which experiments the API supports: @experimentsResult.ErrorMessage
+                You can still try <strong>Start run</strong> — it will call experiment id
+                <code>@Info.Slug</code>, which will work automatically once the backend supports it.
+                <button type="button" class="btn btn-link" @onclick="LoadExperimentsAsync">Retry</button>
+            </p>
+        }
+        else if (matchedExperiment is null)
+        {
+            <p class="alert alert-info">
+                The API hasn't registered an experiment matching <strong>@Info.DisplayName</strong> yet.
+                Preset controls below use safe local defaults, and <strong>Start run</strong> will call
+                experiment id <code>@Info.Slug</code> as a best guess.
+            </p>
+        }
+        else
+        {
+            <p class="alert alert-success">
+                Connected to experiment <strong>@matchedExperiment.Name</strong> (id <code>@matchedExperiment.Id</code>).
+            </p>
+        }
+    </section>
+
+    <section class="workbench__controls" aria-labelledby="run-controls-heading-@InstanceId">
+        <h2 id="run-controls-heading-@InstanceId">Run a safe experiment</h2>
+
+        <fieldset disabled="@(starting || IsRunActive)">
+            <legend>Preset</legend>
+            @if (effectivePresets.Count == 0)
+            {
+                <p><em>No presets available.</em></p>
+            }
+            else
+            {
+                <div class="preset-list">
+                    @foreach (var preset in effectivePresets)
+                    {
+                        var inputId = $"preset-{InstanceId}-{preset.Id}";
+                        <div class="preset-option">
+                            <input type="radio" id="@inputId" name="preset-group-@InstanceId"
+                                   value="@preset.Id" checked="@(selectedPresetId == preset.Id)"
+                                   @onchange="() => selectedPresetId = preset.Id" />
+                            <label for="@inputId">
+                                <span class="preset-option__name">@preset.Name</span>
+                                @if (!string.IsNullOrWhiteSpace(preset.Description))
+                                {
+                                    <span class="preset-option__description">@preset.Description</span>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(preset.RiskNote))
+                                {
+                                    <span class="preset-option__risk">Safety: @preset.RiskNote</span>
+                                }
+                            </label>
+                        </div>
+                    }
+                </div>
+            }
+        </fieldset>
+
+        <div class="field">
+            <label for="target-@InstanceId">Target (optional)</label>
+            <select id="target-@InstanceId" @bind="targetInput" disabled="@(starting || IsRunActive)">
+                <option value="">Default (let the API decide)</option>
+                <option value="apiservice">apiservice</option>
+                <option value="webfrontend">webfrontend</option>
+            </select>
+            <small class="field__hint">Selects which service process should run the experiment.</small>
+        </div>
+
+        @if (ShowDuration)
+        {
+            <div class="field">
+                <label for="duration-@InstanceId">Duration (seconds)</label>
+                <input id="duration-@InstanceId"
+                       type="number"
+                       min="1"
+                       max="60"
+                       step="1"
+                       @bind="durationSeconds"
+                       disabled="@(starting || IsRunActive)" />
+                <small class="field__hint">The workload and live chart collection stop after this bounded duration. Allowed range: 1–60 seconds.</small>
+            </div>
+        }
+
+        <div class="workbench__actions">
+            <button type="button" class="btn btn-primary" @onclick="StartRun" disabled="@(starting || IsRunActive || selectedPresetId is null)">
+                @(starting ? "Starting…" : "Start run")
+            </button>
+            @if (IsRunActive)
+            {
+                <button type="button" class="btn btn-secondary" @onclick="CancelRun" disabled="@cancelling">
+                    @(cancelling ? "Cancelling…" : "Cancel run")
+                </button>
+            }
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(startError))
+        {
+            <p class="alert alert-error" role="alert">@startError</p>
+        }
+    </section>
+
+    <section class="workbench__status" aria-live="polite" aria-atomic="true">
+        @if (currentRun is not null)
+        {
+            <h2>Run status</h2>
+            <div class="run-card">
+                <div class="run-card__row">
+                    <RunStatusBadge Status="currentRun.Status" RawStatus="currentRun.RawStatus" />
+                    <span class="run-card__id">Run <code>@currentRun.RunId</code></span>
+                </div>
+                <dl class="run-card__facts">
+                    <div><dt>Preset</dt><dd>@(currentRun.Preset ?? "—")</dd></div>
+                    <div><dt>Target</dt><dd>@(currentRun.Target ?? "default")</dd></div>
+                    <div><dt>Started</dt><dd>@(currentRun.StartedAtUtc?.ToLocalTime().ToString("T") ?? "—")</dd></div>
+                    <div><dt>Completed</dt><dd>@(currentRun.CompletedAtUtc?.ToLocalTime().ToString("T") ?? "—")</dd></div>
+                </dl>
+                @if (!string.IsNullOrWhiteSpace(currentRun.Message))
+                {
+                    <p class="run-card__message">@currentRun.Message</p>
+                }
+                @if (!string.IsNullOrWhiteSpace(currentRun.ErrorMessage))
+                {
+                    <p class="alert alert-error" role="alert">@currentRun.ErrorMessage</p>
+                }
+                @if (!string.IsNullOrWhiteSpace(pollError))
+                {
+                    <p class="alert alert-warning">Live status update failed: @pollError (still retrying…)</p>
+                }
+                @if (currentRun.Metrics.Count > 0)
+                {
+                    <h3>Metrics</h3>
+                    <div class="instrument-table-wrap">
+                        <table class="instrument-table">
+                            <thead><tr><th scope="col">Metric</th><th scope="col">Value</th><th scope="col">Unit</th></tr></thead>
+                            <tbody>
+                                @foreach (var metric in currentRun.Metrics)
+                                {
+                                    <tr>
+                                        <th scope="row"><code>@metric.Name</code></th>
+                                        <td>@metric.Value</td>
+                                        <td>@(metric.Unit ?? "—")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+
+    @if (recentRuns.Count > 0)
+    {
+        <section class="workbench__history">
+            <h2>Recent runs in this session</h2>
+            <ul class="history-list">
+                @foreach (var run in recentRuns)
+                {
+                    <li>
+                        <code>@run.RunId</code> — @run.Preset — @run.StartedAtUtc.ToLocalTime().ToString("T")
+                        <button type="button" class="btn btn-link" @onclick="() => ViewRun(run.RunId)">View</button>
+                    </li>
+                }
+            </ul>
+        </section>
+    }
+
+    <DashboardGuidanceCard Text="@Info.DashboardGuidance" />
+</article>
+
+@code {
+    [Parameter, EditorRequired]
+    public MetricCategory Category { get; set; }
+
+    [Parameter]
+    public EventCallback<bool> RunActivityChanged { get; set; }
+
+    [Parameter]
+    public bool ShowDuration { get; set; }
+
+    private readonly string InstanceId = Guid.NewGuid().ToString("N")[..8];
+
+    private CategoryInfo Info => ExperimentCatalog.Get(Category);
+
+    private bool loadingExperiments = true;
+    private ApiResult<IReadOnlyList<ExperimentSummary>>? experimentsResult;
+    private ExperimentSummary? matchedExperiment;
+    private List<ExperimentPresetOption> effectivePresets = new();
+    private string? selectedPresetId;
+    private string targetInput = "";
+    private int durationSeconds = 10;
+
+    private bool starting;
+    private bool cancelling;
+    private string? startError;
+    private string? pollError;
+    private ExperimentRun? currentRun;
+
+    private CancellationTokenSource? _pollCts;
+
+    private IReadOnlyList<TrackedRun> recentRuns => Tracker.Runs.Where(r => r.Category == Category).Take(5).ToList();
+
+    private bool IsRunActive => currentRun is { Status: RunState.Pending or RunState.Running };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadExperimentsAsync();
+    }
+
+    private async Task LoadExperimentsAsync()
+    {
+        loadingExperiments = true;
+        experimentsResult = await Api.GetExperimentsAsync();
+
+        matchedExperiment = experimentsResult.Success
+            ? experimentsResult.Value!.FirstOrDefault(e => ExperimentCatalog.Matches(Info, e))
+            : null;
+
+        effectivePresets = matchedExperiment?.Presets is { Count: > 0 } backendPresets
+            ? backendPresets.ToList()
+            : Info.SafePresets.Select(p => new ExperimentPresetOption(p.Id, p.Name, p.Description, p.RiskNote)).ToList();
+
+        selectedPresetId = effectivePresets.FirstOrDefault()?.Id;
+        loadingExperiments = false;
+    }
+
+    private async Task StartRun()
+    {
+        if (selectedPresetId is null)
+        {
+            startError = "Choose a preset first.";
+            return;
+        }
+
+        starting = true;
+        startError = null;
+
+        var experimentId = matchedExperiment?.Id ?? Info.Slug;
+        var target = string.IsNullOrWhiteSpace(targetInput) ? null : targetInput;
+        if (ShowDuration && durationSeconds is < 1 or > 60)
+        {
+            startError = "Duration must be between 1 and 60 seconds.";
+            starting = false;
+            return;
+        }
+
+        var result = await Api.StartRunAsync(
+            experimentId,
+            selectedPresetId,
+            target,
+            ShowDuration ? durationSeconds : null);
+
+        starting = false;
+
+        if (result.Success && result.Value is not null)
+        {
+            currentRun = result.Value;
+            Tracker.Track(new TrackedRun(currentRun.RunId, experimentId, Category, selectedPresetId, target, DateTimeOffset.UtcNow));
+            if (IsRunActive || currentRun.Status == RunState.Unknown)
+            {
+                await RunActivityChanged.InvokeAsync(true);
+                StartPolling(currentRun.RunId);
+            }
+        }
+        else
+        {
+            startError = result.ErrorMessage;
+        }
+    }
+
+    private async Task CancelRun()
+    {
+        if (currentRun is null)
+        {
+            return;
+        }
+
+        cancelling = true;
+
+        var result = await Api.CancelRunAsync(currentRun.RunId);
+        if (!result.Success)
+        {
+            startError = $"Cancel failed: {result.ErrorMessage}";
+        }
+        else
+        {
+            var refreshed = await Api.GetRunAsync(currentRun.RunId);
+            if (refreshed.Success)
+            {
+                currentRun = refreshed.Value;
+            }
+        }
+
+        cancelling = false;
+        if (!IsRunActive)
+        {
+            await RunActivityChanged.InvokeAsync(false);
+            StopPolling();
+        }
+    }
+
+    private async Task ViewRun(string runId)
+    {
+        var result = await Api.GetRunAsync(runId);
+        if (result.Success)
+        {
+            currentRun = result.Value;
+            if (IsRunActive)
+            {
+                StartPolling(runId);
+            }
+        }
+        else
+        {
+            startError = result.ErrorMessage;
+        }
+    }
+
+    private void StartPolling(string runId)
+    {
+        StopPolling();
+        _pollCts = new CancellationTokenSource();
+        _ = PollLoopAsync(runId, _pollCts.Token);
+    }
+
+    private void StopPolling()
+    {
+        _pollCts?.Cancel();
+        _pollCts?.Dispose();
+        _pollCts = null;
+    }
+
+    private async Task PollLoopAsync(string runId, CancellationToken token)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+            while (await timer.WaitForNextTickAsync(token))
+            {
+                var result = await Api.GetRunAsync(runId, token);
+
+                await InvokeAsync(() =>
+                {
+                    if (result.Success)
+                    {
+                        currentRun = result.Value;
+                        pollError = null;
+                    }
+                    else
+                    {
+                        pollError = result.ErrorMessage;
+                    }
+
+                    StateHasChanged();
+                });
+
+                if (result.Success && result.Value is not null && result.Value.Status
+                    is RunState.Completed or RunState.Failed or RunState.Cancelled)
+                {
+                    await InvokeAsync(() => RunActivityChanged.InvokeAsync(false));
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected when the component is disposed or a new run starts.
+        }
+    }
+
+    public void Dispose() => StopPolling();
+}

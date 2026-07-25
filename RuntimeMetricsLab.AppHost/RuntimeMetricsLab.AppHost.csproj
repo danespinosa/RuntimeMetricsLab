@@ -1,0 +1,16 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.4.6">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UserSecretsId>8fc531bd-d3ee-4990-8f53-fa3c34cfb29b</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RuntimeMetricsLab.ApiService\RuntimeMetricsLab.ApiService.csproj" />
+    <ProjectReference Include="..\RuntimeMetricsLab.Web\RuntimeMetricsLab.Web.csproj" />
+  </ItemGroup>
+
+</Project>

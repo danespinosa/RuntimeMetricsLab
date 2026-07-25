@@ -1,0 +1,66 @@
+<div class="run-slot">
+    <h3>@Title</h3>
+    <div class="run-slot__input">
+        <label for="runid-@Slug">Run ID</label>
+        <input id="runid-@Slug" list="runid-suggestions-@Slug" value="@RunId" @oninput="OnInput" placeholder="Paste or pick a run id" />
+        <datalist id="runid-suggestions-@Slug">
+            @foreach (var suggestion in Suggestions)
+            {
+                <option value="@suggestion.RunId">@suggestion.RunId — @suggestion.Category — @suggestion.Preset</option>
+            }
+        </datalist>
+        <button type="button" class="btn btn-secondary" @onclick="OnLoad" disabled="@Loading">@(Loading ? "Loading…" : "Load")</button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(Error))
+    {
+        <p class="alert alert-error" role="alert">@Error</p>
+    }
+
+    @if (Run is not null)
+    {
+        <div class="run-slot__summary">
+            <RunStatusBadge Status="Run.Status" RawStatus="Run.RawStatus" />
+            <dl class="run-card__facts">
+                <div><dt>Experiment</dt><dd>@(Run.ExperimentId ?? "—")</dd></div>
+                <div><dt>Preset</dt><dd>@(Run.Preset ?? "—")</dd></div>
+                <div><dt>Target</dt><dd>@(Run.Target ?? "default")</dd></div>
+            </dl>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = "";
+
+    [Parameter]
+    public string RunId { get; set; } = "";
+
+    [Parameter]
+    public EventCallback<string> RunIdChanged { get; set; }
+
+    [Parameter]
+    public ExperimentRun? Run { get; set; }
+
+    [Parameter]
+    public string? Error { get; set; }
+
+    [Parameter]
+    public bool Loading { get; set; }
+
+    [Parameter]
+    public EventCallback OnLoad { get; set; }
+
+    [Parameter]
+    public IReadOnlyList<TrackedRun> Suggestions { get; set; } = Array.Empty<TrackedRun>();
+
+    private string Slug => Title.Replace(" ", "-").ToLowerInvariant();
+
+    private async Task OnInput(ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString() ?? "";
+        RunId = value;
+        await RunIdChanged.InvokeAsync(value);
+    }
+}

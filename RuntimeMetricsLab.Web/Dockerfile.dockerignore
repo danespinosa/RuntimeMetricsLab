@@ -1,0 +1,25 @@
+# Docker build context ignore file for RuntimeMetricsLab.Web/Dockerfile.
+# Applies only when this Dockerfile is used (per-Dockerfile .dockerignore, BuildKit).
+# Build context is the repository root; keep only what the Web image needs.
+
+# VCS / IDE / tooling noise
+.git
+.gitignore
+.vs
+.vscode
+.agents
+*.user
+*.suo
+
+# Build outputs (restored/rebuilt inside the image)
+**/bin
+**/obj
+
+# Documentation and non-runtime assets
+docs
+**/*.md
+
+# Projects not needed to build/run the Web image
+RuntimeMetricsLab.AppHost
+RuntimeMetricsLab.ApiService
+RuntimeMetricsLab.Experiments.Tests

@@ -1,0 +1,122 @@
+@page "/compare"
+@rendermode InteractiveServer
+@inject ExperimentsApiClient Api
+@inject RunTracker Tracker
+
+<PageTitle>Compare runs - RuntimeMetricsLab</PageTitle>
+
+<h1><span class="bi bi-columns-gap" aria-hidden="true"></span> Compare runs</h1>
+<p class="page-lead">
+    Load two runs side by side — for example the same experiment on two different presets, or the
+    same preset against two different <code>target</code> processes — to compare resource impact.
+    This view compares the metric values embedded in each run's API response; for a full
+    resource/platform breakdown (CPU, memory, and traces across the <code>apiservice</code> and
+    <code>webfrontend</code> resources), also open the Aspire dashboard alongside this page.
+</p>
+
+<HostMetricsNotice />
+
+<section class="compare-grid" aria-label="Runs to compare">
+    <RunSlot Title="Run A" @bind-RunId="runAId" Run="runA" Error="runAError" Loading="runALoading" OnLoad="() => LoadRunAsync(true)" Suggestions="Tracker.Runs" />
+    <RunSlot Title="Run B" @bind-RunId="runBId" Run="runB" Error="runBError" Loading="runBLoading" OnLoad="() => LoadRunAsync(false)" Suggestions="Tracker.Runs" />
+</section>
+
+@if (runA is not null || runB is not null)
+{
+    <section class="compare-table-section" aria-label="Metric comparison">
+        <h2>Metric comparison</h2>
+        @if (metricNames.Count == 0)
+        {
+            <p><em>Neither loaded run has a per-run summary yet. Runs created before this feature was enabled only exported metrics to Aspire; start new runs and load them after completion.</em></p>
+        }
+        else
+        {
+            <div class="instrument-table-wrap">
+                <table class="instrument-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Metric</th>
+                            <th scope="col">Run A</th>
+                            <th scope="col">Run B</th>
+                            <th scope="col">Difference (A − B)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var name in metricNames)
+                        {
+                            var a = FindMetric(runA, name);
+                            var b = FindMetric(runB, name);
+                            <tr>
+                                <th scope="row"><code>@name</code></th>
+                                <td>@(a?.Value ?? "—")</td>
+                                <td>@(b?.Value ?? "—")</td>
+                                <td>@Difference(a, b)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+}
+
+<DashboardGuidanceCard Text="Resource/platform attributes (runtime.metrics.lab.role and runtime.metrics.lab.platform, set in RuntimeMetricsLab.ServiceDefaults) aren't part of the run JSON — filter by resource in the Aspire dashboard's Metrics tab to compare the same experiment across processes or platforms." />
+
+@code {
+    private string runAId = "";
+    private string runBId = "";
+    private ExperimentRun? runA;
+    private ExperimentRun? runB;
+    private string? runAError;
+    private string? runBError;
+    private bool runALoading;
+    private bool runBLoading;
+
+    private List<string> metricNames =>
+        runA?.Metrics.Select(m => m.Name)
+            .Concat(runB?.Metrics.Select(m => m.Name) ?? Enumerable.Empty<string>())
+            .Distinct()
+            .ToList() ?? runB?.Metrics.Select(m => m.Name).Distinct().ToList() ?? new List<string>();
+
+    private static RunMetricSample? FindMetric(ExperimentRun? run, string name) =>
+        run?.Metrics.FirstOrDefault(m => m.Name == name);
+
+    private static string Difference(RunMetricSample? a, RunMetricSample? b)
+    {
+        if (a is null || b is null)
+        {
+            return "—";
+        }
+
+        if (double.TryParse(a.Value, out var da) && double.TryParse(b.Value, out var db))
+        {
+            return (da - db).ToString("G4");
+        }
+
+        return a.Value == b.Value ? "match" : "differs";
+    }
+
+    private async Task LoadRunAsync(bool slotA)
+    {
+        var id = slotA ? runAId : runBId;
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return;
+        }
+
+        if (slotA) { runALoading = true; runAError = null; } else { runBLoading = true; runBError = null; }
+
+        var result = await Api.GetRunAsync(id.Trim());
+
+        if (slotA)
+        {
+            runALoading = false;
+            if (result.Success) { runA = result.Value; } else { runAError = result.ErrorMessage; }
+        }
+        else
+        {
+            runBLoading = false;
+            if (result.Success) { runB = result.Value; } else { runBError = result.ErrorMessage; }
+        }
+    }
+}

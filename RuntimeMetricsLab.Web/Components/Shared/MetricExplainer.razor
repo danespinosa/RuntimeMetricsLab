@@ -1,0 +1,40 @@
+<section class="instrument-explainer" aria-labelledby="@HeadingId">
+    <h2 id="@HeadingId">How to read this signal</h2>
+    <p>
+        Meter: <code>@Meter</code>
+    </p>
+    <div class="instrument-table-wrap">
+        <table class="instrument-table">
+            <caption class="visually-hidden">Instruments published under the @Meter meter, with units and expected movement</caption>
+            <thead>
+                <tr>
+                    <th scope="col">Instrument</th>
+                    <th scope="col">Type</th>
+                    <th scope="col">Unit</th>
+                    <th scope="col">Expected movement</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var instrument in Instruments)
+                {
+                    <tr>
+                        <th scope="row"><code>@instrument.Name</code></th>
+                        <td>@instrument.Type</td>
+                        <td><code>@instrument.Unit</code></td>
+                        <td>@instrument.ExpectedMovement</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Meter { get; set; } = "";
+
+    [Parameter, EditorRequired]
+    public IReadOnlyList<InstrumentInfo> Instruments { get; set; } = Array.Empty<InstrumentInfo>();
+
+    private readonly string HeadingId = $"instruments-{Guid.NewGuid():N}";
+}

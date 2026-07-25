@@ -1,0 +1,6 @@
+{
+  "appHost": {
+    "path": "RuntimeMetricsLab.AppHost/RuntimeMetricsLab.AppHost.csproj"
+  },
+  "channel": "stable"
+}

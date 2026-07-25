@@ -1,0 +1,25 @@
+# Docker build context ignore file for RuntimeMetricsLab.ApiService/Dockerfile.
+# Applies only when this Dockerfile is used (per-Dockerfile .dockerignore, BuildKit).
+# Build context is the repository root; keep only what the ApiService image needs.
+
+# VCS / IDE / tooling noise
+.git
+.gitignore
+.vs
+.vscode
+.agents
+*.user
+*.suo
+
+# Build outputs (restored/rebuilt inside the image)
+**/bin
+**/obj
+
+# Documentation and non-runtime assets
+docs
+**/*.md
+
+# Projects not needed to build/run the ApiService image
+RuntimeMetricsLab.AppHost
+RuntimeMetricsLab.Web
+RuntimeMetricsLab.Experiments.Tests

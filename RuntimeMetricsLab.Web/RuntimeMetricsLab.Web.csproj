@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RuntimeMetricsLab.ServiceDefaults\RuntimeMetricsLab.ServiceDefaults.csproj" />
+    <ProjectReference Include="..\RuntimeMetricsLab.Contracts\RuntimeMetricsLab.Contracts.csproj" />
+    <ProjectReference Include="..\RuntimeMetricsLab.Experiments\RuntimeMetricsLab.Experiments.csproj" />
+  </ItemGroup>
+
+</Project>

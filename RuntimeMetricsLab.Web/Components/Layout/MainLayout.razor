@@ -1,0 +1,27 @@
+﻿@inherits LayoutComponentBase
+
+<a href="#main-content" class="skip-link">Skip to main content</a>
+
+<div class="page">
+    <div class="sidebar">
+        <NavMenu />
+    </div>
+
+    <main>
+        <div class="top-row px-4">
+            <a href="https://learn.microsoft.com/dotnet/core/diagnostics/" target="_blank" rel="noopener">.NET diagnostics docs</a>
+            <a href="https://learn.microsoft.com/dotnet/aspire/fundamentals/dashboard/overview" target="_blank" rel="noopener">Aspire dashboard docs</a>
+        </div>
+
+        <article id="main-content" class="content px-4" tabindex="-1">
+            @Body
+        </article>
+    </main>
+</div>
+
+<div id="blazor-error-ui" role="alert">
+    An unhandled error has occurred.
+    <a href="" class="reload">Reload</a>
+    <a class="dismiss">🗙</a>
+</div>
+

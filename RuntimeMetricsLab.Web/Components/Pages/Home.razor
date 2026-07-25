@@ -1,0 +1,80 @@
+@page "/"
+@rendermode InteractiveServer
+@inject ExperimentsApiClient Api
+
+<PageTitle>RuntimeMetricsLab</PageTitle>
+
+<div class="hero">
+    <h1>RuntimeMetricsLab</h1>
+    <p class="hero__subtitle">
+        An interactive playground for learning how .NET runtime and OpenTelemetry metrics move under
+        safe, bounded, teaching-sized workloads — CPU, GC/allocations, thread pool, HTTP, sockets/TLS,
+        gRPC, and your own custom instruments.
+    </p>
+</div>
+
+<HostMetricsNotice />
+
+<section class="backend-status" aria-live="polite" aria-label="API connection status">
+    @if (loading)
+    {
+        <p class="alert alert-info">Checking the API service for available experiments…</p>
+    }
+    else if (result is { Success: false })
+    {
+        <p class="alert alert-warning">
+            Couldn't reach <code>GET /api/experiments</code>: @result.ErrorMessage
+            @if (result.EndpointUnavailable)
+            {
+                <text> This is expected if RuntimeMetricsLab.ApiService hasn't implemented the experiments contract yet — the category pages still work and will connect automatically once it does.</text>
+            }
+        </p>
+    }
+    else if (result is { Success: true })
+    {
+        <p class="alert alert-success">
+            Connected to the API service — @result.Value!.Count experiment(s) currently registered.
+        </p>
+    }
+</section>
+
+<section class="category-grid" aria-labelledby="categories-heading">
+    <h2 id="categories-heading">Explore a category</h2>
+    <div class="grid">
+        @foreach (var category in ExperimentCatalog.Categories)
+        {
+            <a class="category-card" href="@("/" + category.Slug)">
+                <span class="category-card__icon bi @category.IconClass" aria-hidden="true"></span>
+                <span class="category-card__name">@category.DisplayName</span>
+                <span class="category-card__meter">Meter: <code>@category.Meter</code></span>
+                <span class="category-card__blurb">@category.ShortLabel</span>
+            </a>
+        }
+    </div>
+</section>
+
+<section class="get-started" aria-labelledby="get-started-heading">
+    <h2 id="get-started-heading">How this works</h2>
+    <ol class="steps">
+        <li><strong>Pick a category</strong> — each page explains the OpenTelemetry meter and instruments it exercises, with expected units and movement.</li>
+        <li><strong>Choose a safe preset</strong> — every preset is bounded (capped duration, item count, or payload size) so it's safe to run repeatedly.</li>
+        <li><strong>Watch the live status</strong> here, then confirm the movement in your metrics dashboard while the run is <strong>Running</strong>.</li>
+    </ol>
+    <p>
+        Want to compare two runs side by side (e.g. two presets, or the same preset against two targets)?
+        Head to <a href="/compare">Compare runs</a>.
+    </p>
+</section>
+
+<DashboardGuidanceCard Text="Every category page links to the specific instruments it moves; for a broader view, open the Aspire dashboard's Metrics and Traces tabs while experimenting." />
+
+@code {
+    private bool loading = true;
+    private ApiResult<IReadOnlyList<ExperimentSummary>>? result;
+
+    protected override async Task OnInitializedAsync()
+    {
+        result = await Api.GetExperimentsAsync();
+        loading = false;
+    }
+}

@@ -1,0 +1,24 @@
+<section class="exercise-flow" aria-labelledby="@HeadingId">
+    <h2 id="@HeadingId">What happens during this exercise</h2>
+    <div class="exercise-flow__grid">
+        <article>
+            <h3><span class="bi bi-window" aria-hidden="true"></span> Client activity</h3>
+            <p>@Flow.ClientActivity</p>
+        </article>
+        <article>
+            <h3><span class="bi bi-server" aria-hidden="true"></span> Server activity</h3>
+            <p>@Flow.ServerActivity</p>
+        </article>
+        <article>
+            <h3><span class="bi bi-activity" aria-hidden="true"></span> Why resources move</h3>
+            <p>@Flow.ResourceImpact</p>
+        </article>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired]
+    public ExerciseFlow Flow { get; set; } = default!;
+
+    private readonly string HeadingId = $"exercise-flow-{Guid.NewGuid():N}";
+}

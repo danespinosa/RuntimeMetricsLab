@@ -1,0 +1,86 @@
+<article class="live-chart">
+    <header class="live-chart__header">
+        <div>
+            <h3>@Title</h3>
+            <p>@Description</p>
+        </div>
+        <div class="live-chart__latest" aria-live="polite">
+            <span class="live-chart__value live-chart__value--client">Client: @Format(LatestClient) @Unit</span>
+            <span class="live-chart__value live-chart__value--server">Server: @Format(LatestServer) @Unit</span>
+        </div>
+    </header>
+
+    @if (Points.Count < 2)
+    {
+        <div class="live-chart__empty">Collecting samples…</div>
+    }
+    else
+    {
+        <svg class="live-chart__svg" viewBox="0 0 800 240" role="img" aria-label="@($"{Title}: client and server values over time")">
+            <line x1="48" y1="16" x2="48" y2="208" class="live-chart__axis" />
+            <line x1="48" y1="208" x2="784" y2="208" class="live-chart__axis" />
+            <line x1="48" y1="16" x2="784" y2="16" class="live-chart__grid" />
+            <line x1="48" y1="112" x2="784" y2="112" class="live-chart__grid" />
+            <text x="42" y="21" text-anchor="end" class="live-chart__label">@Format(Maximum)</text>
+            <text x="42" y="213" text-anchor="end" class="live-chart__label">@Format(Minimum)</text>
+            <polyline points="@ClientPolyline" class="live-chart__line live-chart__line--client" />
+            <polyline points="@ServerPolyline" class="live-chart__line live-chart__line--server" />
+        </svg>
+        <div class="live-chart__legend">
+            <span><i class="live-chart__swatch live-chart__swatch--client"></i> Client process</span>
+            <span><i class="live-chart__swatch live-chart__swatch--server"></i> Server process</span>
+            <span>Last @Points.Count seconds</span>
+        </div>
+    }
+</article>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter] public string Description { get; set; } = "";
+    [Parameter] public string Unit { get; set; } = "";
+    [Parameter, EditorRequired] public IReadOnlyList<LiveMetricPoint> Points { get; set; } = Array.Empty<LiveMetricPoint>();
+    [Parameter] public double? FixedMinimum { get; set; }
+    [Parameter] public double? FixedMaximum { get; set; }
+    [Parameter] public string FormatString { get; set; } = "0.##";
+
+    private double LatestClient => Points.LastOrDefault()?.ClientValue ?? 0;
+    private double LatestServer => Points.LastOrDefault()?.ServerValue ?? 0;
+    private double Minimum => FixedMinimum ?? CalculateBounds().Minimum;
+    private double Maximum => FixedMaximum ?? CalculateBounds().Maximum;
+    private string ClientPolyline => BuildPolyline(static point => point.ClientValue);
+    private string ServerPolyline => BuildPolyline(static point => point.ServerValue);
+
+    private (double Minimum, double Maximum) CalculateBounds()
+    {
+        if (Points.Count == 0)
+        {
+            return (0, 1);
+        }
+
+        var minimum = Points.Min(point => Math.Min(point.ClientValue, point.ServerValue));
+        var maximum = Points.Max(point => Math.Max(point.ClientValue, point.ServerValue));
+        if (Math.Abs(maximum - minimum) < 0.0001)
+        {
+            return (Math.Max(0, minimum - 1), maximum + 1);
+        }
+
+        var padding = (maximum - minimum) * 0.1;
+        return (Math.Max(0, minimum - padding), maximum + padding);
+    }
+
+    private string BuildPolyline(Func<LiveMetricPoint, double> selector)
+    {
+        var minimum = Minimum;
+        var range = Math.Max(0.0001, Maximum - minimum);
+        return string.Join(
+            " ",
+            Points.Select((point, index) =>
+            {
+                var x = 48 + index * 736d / Math.Max(1, Points.Count - 1);
+                var y = 208 - (selector(point) - minimum) / range * 192;
+                return $"{x:0.##},{Math.Clamp(y, 16, 208):0.##}";
+            }));
+    }
+
+    private string Format(double value) => value.ToString(FormatString);
+}

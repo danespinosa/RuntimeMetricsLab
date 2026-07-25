@@ -1,0 +1,14 @@
+<aside class="guidance-card" aria-label="Dashboard guidance">
+    <h2><span class="bi bi-graph-up-arrow" aria-hidden="true"></span> Where to watch this in the dashboard</h2>
+    <p>@Text</p>
+    <p class="guidance-card__hint">
+        Use the Aspire dashboard's <strong>Metrics</strong> tab (or the OTLP endpoint configured via
+        <code>OTEL_EXPORTER_OTLP_ENDPOINT</code>) while a run is <strong>Running</strong> — most instruments
+        report on a periodic export interval, so allow a few seconds after starting a run before you see movement.
+    </p>
+</aside>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Text { get; set; } = "";
+}

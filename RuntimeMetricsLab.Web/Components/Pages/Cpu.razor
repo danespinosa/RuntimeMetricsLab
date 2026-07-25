@@ -1,0 +1,16 @@
+@page "/cpu"
+@rendermode InteractiveServer
+
+<PageTitle>CPU - RuntimeMetricsLab</PageTitle>
+
+<MetricWorkbench Category="MetricCategory.Cpu"
+                 ShowDuration="true"
+                 RunActivityChanged="SetLiveMetricsEnabled" />
+
+<CpuLiveCharts Enabled="liveMetricsEnabled" />
+
+@code {
+    private bool liveMetricsEnabled;
+
+    private void SetLiveMetricsEnabled(bool enabled) => liveMetricsEnabled = enabled;
+}

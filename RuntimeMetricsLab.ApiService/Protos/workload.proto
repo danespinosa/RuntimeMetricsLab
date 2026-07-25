@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+option csharp_namespace = "RuntimeMetricsLab.ApiService.Grpc";
+
+package runtimemetricslab.workload;
+
+// Loopback-only workload service used by the gRPC experiments (RuntimeMetricsLab.Experiments)
+// to generate real unary and server-streaming gRPC traffic against this same process.
+service WorkloadService {
+  rpc UnaryEcho (EchoRequest) returns (EchoReply);
+  rpc StreamEcho (StreamRequest) returns (stream EchoReply);
+}
+
+message EchoRequest {
+  int32 payload_size_bytes = 1;
+}
+
+message EchoReply {
+  int64 sequence = 1;
+  bytes payload = 2;
+}
+
+message StreamRequest {
+  int32 payload_size_bytes = 1;
+  int32 message_count = 2;
+}

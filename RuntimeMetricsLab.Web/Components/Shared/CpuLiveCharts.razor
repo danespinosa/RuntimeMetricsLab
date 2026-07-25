@@ -1,0 +1,141 @@
+@implements IDisposable
+@inject CpuMetricsMonitor LocalMonitor
+@inject ExperimentsApiClient Api
+
+<section class="live-metrics" aria-labelledby="@HeadingId">
+    <header class="live-metrics__header">
+        <div>
+            <h2 id="@HeadingId">Live client and server metrics</h2>
+            <p>Samples come from the built-in <code>System.Runtime</code> meter in each process and refresh every second.</p>
+        </div>
+        @if (Enabled)
+        {
+            <span class="live-status"><i></i> Live</span>
+        }
+        else if (hasCollected)
+        {
+            <span class="live-status live-status--paused">Captured</span>
+        }
+    </header>
+
+    @if (!Enabled && !hasCollected)
+    {
+        <div class="live-metrics__waiting">
+            Start a CPU experiment to begin collecting client and server samples. Collection stops automatically when the run completes or is cancelled.
+        </div>
+    }
+    else
+    {
+        @if (!string.IsNullOrWhiteSpace(error))
+        {
+            <p class="alert alert-warning">Server metric stream: @error</p>
+        }
+
+        <div class="live-chart-grid">
+            <LiveMetricChart Title="CPU utilization"
+                             Description="CPU time consumed during each interval, normalized across the cores available to each process."
+                             Unit="%"
+                             Points="cpuUtilization"
+                             FixedMinimum="0"
+                             FixedMaximum="100"
+                             FormatString="0.0" />
+            <LiveMetricChart Title="Cumulative process CPU time"
+                             Description="Total user + system CPU seconds consumed since each process started."
+                             Unit="s"
+                             Points="cpuTime"
+                             FormatString="0.00" />
+            <LiveMetricChart Title="Process working set"
+                             Description="Physical memory currently mapped into each process."
+                             Unit="MiB"
+                             Points="workingSet"
+                             FormatString="0.0" />
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter]
+    public bool Enabled { get; set; }
+
+    private const int MaximumPoints = 60;
+    private readonly string HeadingId = $"cpu-live-{Guid.NewGuid():N}";
+    private readonly List<LiveMetricPoint> cpuUtilization = [];
+    private readonly List<LiveMetricPoint> cpuTime = [];
+    private readonly List<LiveMetricPoint> workingSet = [];
+    private CancellationTokenSource? pollingCancellation;
+    private bool hasCollected;
+    private string? error;
+
+    protected override void OnParametersSet()
+    {
+        if (Enabled && pollingCancellation is null)
+        {
+            cpuUtilization.Clear();
+            cpuTime.Clear();
+            workingSet.Clear();
+            hasCollected = false;
+            pollingCancellation = new CancellationTokenSource();
+            _ = PollAsync(pollingCancellation.Token);
+        }
+        else if (!Enabled && pollingCancellation is not null)
+        {
+            StopPolling();
+        }
+    }
+
+    private async Task PollAsync(CancellationToken token)
+    {
+        try
+        {
+            await CollectSampleAsync(token);
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+            while (await timer.WaitForNextTickAsync(token))
+            {
+                await CollectSampleAsync(token);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task CollectSampleAsync(CancellationToken token)
+    {
+        var local = LocalMonitor.GetLatest();
+        var remoteResult = await Api.GetLatestServerCpuMetricsAsync(token);
+        if (!remoteResult.Success || remoteResult.Value is null)
+        {
+            error = remoteResult.ErrorMessage;
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        var remote = remoteResult.Value;
+        Add(cpuUtilization, new(remote.Timestamp, local.CpuUtilizationPercent, remote.CpuUtilizationPercent));
+        Add(cpuTime, new(remote.Timestamp, local.CpuTimeSeconds, remote.CpuTimeSeconds));
+        Add(workingSet, new(remote.Timestamp, BytesToMebibytes(local.WorkingSetBytes), BytesToMebibytes(remote.WorkingSetBytes)));
+        hasCollected = true;
+        error = null;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private static double BytesToMebibytes(long bytes) => bytes / 1024d / 1024d;
+
+    private static void Add(List<LiveMetricPoint> points, LiveMetricPoint point)
+    {
+        points.Add(point);
+        if (points.Count > MaximumPoints)
+        {
+            points.RemoveAt(0);
+        }
+    }
+
+    private void StopPolling()
+    {
+        pollingCancellation?.Cancel();
+        pollingCancellation?.Dispose();
+        pollingCancellation = null;
+    }
+
+    public void Dispose() => StopPolling();
+}
