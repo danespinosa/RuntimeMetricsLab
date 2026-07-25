@@ -739,14 +739,14 @@ fieldset:disabled .preset-option {
 
 .live-chart-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-    gap: 1rem;
-    margin-top: 1rem;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.5rem;
+    margin-top: 1.5rem;
 }
 
 .live-chart {
     min-width: 0;
-    padding: 1rem;
+    padding: 1.5rem;
     border: 1px solid var(--rml-border);
     border-radius: var(--rml-radius);
     background: var(--rml-surface);
@@ -759,7 +759,14 @@ fieldset:disabled .preset-option {
 
 .live-chart__header h3 {
     margin: 0;
-    font-size: 1.05rem;
+    font-size: 1.2rem;
+}
+
+.live-chart__description {
+    max-width: 72rem;
+    margin: 0.75rem 0 0;
+    color: var(--rml-text-muted);
+    line-height: 1.5;
 }
 
 .live-chart__latest {
@@ -780,9 +787,10 @@ fieldset:disabled .preset-option {
 }
 
 .live-chart__svg {
+    display: block;
     width: 100%;
-    min-height: 220px;
-    margin-top: 0.75rem;
+    min-height: 320px;
+    margin-top: 1.25rem;
     overflow: visible;
 }
 
@@ -842,7 +850,7 @@ fieldset:disabled .preset-option {
 
 .live-chart__empty {
     display: grid;
-    min-height: 220px;
+    min-height: 320px;
     place-items: center;
     color: var(--rml-text-muted);
 }

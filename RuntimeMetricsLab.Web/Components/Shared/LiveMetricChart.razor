@@ -1,14 +1,12 @@
 <article class="live-chart">
     <header class="live-chart__header">
-        <div>
-            <h3>@Title</h3>
-            <p>@Description</p>
-        </div>
+        <h3>@Title</h3>
         <div class="live-chart__latest" aria-live="polite">
             <span class="live-chart__value live-chart__value--client">Client: @Format(LatestClient) @Unit</span>
             <span class="live-chart__value live-chart__value--server">Server: @Format(LatestServer) @Unit</span>
         </div>
     </header>
+    <p class="live-chart__description">@Description</p>
 
     @if (Points.Count < 2)
     {
@@ -16,13 +14,13 @@
     }
     else
     {
-        <svg class="live-chart__svg" viewBox="0 0 800 240" role="img" aria-label="@($"{Title}: client and server values over time")">
-            <line x1="48" y1="16" x2="48" y2="208" class="live-chart__axis" />
-            <line x1="48" y1="208" x2="784" y2="208" class="live-chart__axis" />
-            <line x1="48" y1="16" x2="784" y2="16" class="live-chart__grid" />
-            <line x1="48" y1="112" x2="784" y2="112" class="live-chart__grid" />
-            <text x="42" y="21" text-anchor="end" class="live-chart__label">@Format(Maximum)</text>
-            <text x="42" y="213" text-anchor="end" class="live-chart__label">@Format(Minimum)</text>
+        <svg class="live-chart__svg" viewBox="0 0 1000 320" role="img" aria-label="@($"{Title}: client and server values over time")">
+            <line x1="64" y1="24" x2="64" y2="280" class="live-chart__axis" />
+            <line x1="64" y1="280" x2="980" y2="280" class="live-chart__axis" />
+            <line x1="64" y1="24" x2="980" y2="24" class="live-chart__grid" />
+            <line x1="64" y1="152" x2="980" y2="152" class="live-chart__grid" />
+            <text x="58" y="29" text-anchor="end" class="live-chart__label">@Format(Maximum)</text>
+            <text x="58" y="285" text-anchor="end" class="live-chart__label">@Format(Minimum)</text>
             <polyline points="@ClientPolyline" class="live-chart__line live-chart__line--client" />
             <polyline points="@ServerPolyline" class="live-chart__line live-chart__line--server" />
         </svg>
@@ -76,9 +74,9 @@
             " ",
             Points.Select((point, index) =>
             {
-                var x = 48 + index * 736d / Math.Max(1, Points.Count - 1);
-                var y = 208 - (selector(point) - minimum) / range * 192;
-                return $"{x:0.##},{Math.Clamp(y, 16, 208):0.##}";
+                var x = 64 + index * 916d / Math.Max(1, Points.Count - 1);
+                var y = 280 - (selector(point) - minimum) / range * 256;
+                return $"{x:0.##},{Math.Clamp(y, 24, 280):0.##}";
             }));
     }
 
