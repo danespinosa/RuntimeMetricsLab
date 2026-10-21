@@ -1,0 +1,47 @@
+@using RuntimeMetricsLab.Contracts.Attribution
+@implements IAsyncDisposable
+@inject ExperimentsApiClient Api
+
+<section class="card p-3 my-3">
+    <h2>Server runtime memory observations</h2>
+    <p>Built-in measurements of the server process, not browser memory or per-method retained ownership.
+        Last-GC heap/committed values may predate this observation; unavailable values are never replaced with zeros.</p>
+    @if (_error is not null) { <p class="alert alert-warning">@_error</p> }
+    <dl>
+        @foreach (var metric in Metrics)
+        {
+            <dt>@metric</dt><dd>@(_sample is null ? "Unavailable" : AttributionMetrics.Value(_sample, metric)?.ToString("0.###") ?? "Unavailable")</dd>
+        }
+    </dl>
+    <p>Last received: @(_sample?.Utc.ToString("O") ?? "No sample"). GC pause time is seconds; sizes and cumulative allocation are bytes.</p>
+</section>
+
+@code {
+    private static readonly string[] Metrics = ["dotnet.process.memory.working_set", "dotnet.gc.heap.total_allocated",
+        "dotnet.gc.last_collection.heap.size", "dotnet.gc.last_collection.heap.fragmentation.size",
+        "dotnet.gc.last_collection.memory.committed_size", "dotnet.gc.pause.time"];
+    private RuntimePoint? _sample;
+    private string? _error;
+    private readonly CancellationTokenSource _stop = new();
+    private Task? _poll;
+    protected override void OnInitialized() => _poll = Poll();
+    private async Task Poll()
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+            do
+            {
+                var result = await Api.GetLatestRuntimeAsync(_stop.Token);
+                await InvokeAsync(() =>
+                {
+                    _sample = result.Success ? result.Value : null;
+                    _error = result.ErrorMessage;
+                    StateHasChanged();
+                });
+            } while (await timer.WaitForNextTickAsync(_stop.Token));
+        }
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
+    }
+    public async ValueTask DisposeAsync() { _stop.Cancel(); if (_poll is not null) await _poll; _stop.Dispose(); }
+}

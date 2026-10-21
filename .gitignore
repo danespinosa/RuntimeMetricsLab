@@ -480,3 +480,8 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Local attribution captures and derived trace indexes.
+*.nettrace
+*.netperf
+*.etlx

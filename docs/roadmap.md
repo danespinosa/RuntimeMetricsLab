@@ -1,8 +1,42 @@
 # Roadmap
 
-This roadmap tracks how RuntimeMetricsLab grows from its current bare scaffold into a
+This roadmap tracks how RuntimeMetricsLab grows into a
 comprehensive .NET 10 runtime-metrics catalog. Phase numbers are directional, not
 committed dates — reorder/merge as real experiments land.
+
+## Linux method attribution
+
+The opt-in attribution implementation now provides controlled CPU, allocation,
+retention/release and mixed-waiting lessons with real OneCollect collection,
+automatic isolated TraceEvent analysis, durable history and local downloads.
+Reports connect measured process cores to estimated method cores and independently
+weighted allocation bytes/rates/per-call costs. Linked tree/flame views and raw/
+interval charts share the recorded measurement window and preserve uncertainty.
+
+The four-resource standard topology remains the default. Attribution does not
+impose CPU/memory quotas or implement cache/bandwidth attribution, arbitrary
+production-process profiling, generic retained/native/RSS ownership, or exact
+unobserved per-invocation costs. Kernel perf-loss counts remain explicitly
+unavailable in the pinned backend. See [the walkthrough](attribution-lab.md) and
+the real-capture validation script in the README.
+
+## Native Windows continuation
+
+Implemented opt-in native Windows topology, platform/storage/provenance
+boundaries, non-elevated counter diagnostics, target-only allocation probe,
+consent-gated stock Microsoft PerfView launcher, offline analysis adapter, and boundary/lifecycle tests.
+Native workload/counter/allocation evidence is verified. **Full Windows on-CPU
+collection and its elevated end-to-end workflow are not yet live-validated**:
+they require explicit approval of local system-wide raw kernel traces and
+launcher/PerfView-only elevation. The superseded custom ETW engine is removed.
+This permission gate is not hidden by EventPipe
+thread-time samples or counter-only success. See [Windows status](windows-attribution.md).
+
+The Windows primary UX now waits for a deliberate in-app scope decision and
+Windows UAC approval, then authenticates the real profiler before starting work.
+The waiting/denial/cancel/timeout/restart/late-completion paths are covered by
+safe injected fixtures; native UI validation deliberately does not accept scope
+or UAC on the user's behalf. Elevated CPU compatibility remains the external gate.
 
 ## Phase 0 — Scaffold (superseded)
 
@@ -89,9 +123,10 @@ this is the scope-expansion milestone referenced as **#3** for this project.
 - ~~Add a Linux container variant of at least one GC/allocation experiment~~ —
   **done ahead of schedule**: `server-linux`/`client-linux` now run as Linux
   containers on every `aspire run` (see Phase 0.5). The remaining Phase 3 work here
-  is the *experiment content*, not the infrastructure: set explicit CPU/memory
-  limits on the `-linux` containers and concretely demonstrate cgroup-aware GC
-  behavior against the unconstrained `-windows` pair, per
+  is the *experiment content*, not the infrastructure: a separately approved,
+  future quota-changing experiment could demonstrate cgroup-aware GC
+  behavior against the unconstrained `-windows` pair. Attribution mode deliberately
+  imposes no container quotas. See
   [`docs/architecture.md`](architecture.md) and the container-limits row in
   [`docs/metric-catalog.md`](metric-catalog.md).
 - Consider exemplars (metric-to-trace links) once the OTel/.NET tooling around

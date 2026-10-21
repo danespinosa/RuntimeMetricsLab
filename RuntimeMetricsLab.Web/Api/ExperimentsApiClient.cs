@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using RuntimeMetricsLab.Contracts.Diagnostics;
+using RuntimeMetricsLab.Contracts.Attribution;
 
 namespace RuntimeMetricsLab.Web.Api;
 
@@ -71,9 +72,24 @@ public sealed class ExperimentsApiClient(HttpClient httpClient, ILogger<Experime
                 ? ApiResult<RuntimeMetricSample>.Fail("The server returned an empty runtime metric sample.")
                 : ApiResult<RuntimeMetricSample>.Ok(sample);
         }
+
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
         {
             return ApiResult<RuntimeMetricSample>.Fail(DescribeTransportException(ex));
+        }
+    }
+
+    public async Task<ApiResult<RuntimePoint>> GetLatestRuntimeAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var sample = await httpClient.GetFromJsonAsync<RuntimePoint>("api/metrics/runtime/latest", JsonOptions, cancellationToken);
+            return sample is null ? ApiResult<RuntimePoint>.Fail("Runtime sample unavailable.") : ApiResult<RuntimePoint>.Ok(sample);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            logger.LogWarning(exception, "Runtime sample request failed");
+            return ApiResult<RuntimePoint>.Fail(DescribeTransportException(exception));
         }
     }
 

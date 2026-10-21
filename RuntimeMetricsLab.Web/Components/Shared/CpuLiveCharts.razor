@@ -33,11 +33,10 @@
 
         <div class="live-chart-grid">
             <LiveMetricChart Title="CPU utilization"
-                             Description="Calculated for each interval as the change in user + system CPU time divided by elapsed wall-clock time and the number of processors available to the process."
+                             Description="User + system CPU delta divided by monotonic elapsed time and runtime-visible CPU count. Missing or stale observations are gaps, not zeros."
                              Unit="%"
                              Points="cpuUtilization"
                              FixedMinimum="0"
-                             FixedMaximum="100"
                              FormatString="0.0" />
             <LiveMetricChart Title="Cumulative process CPU time"
                              Description="Total user + system CPU seconds consumed since each process started."
@@ -106,16 +105,19 @@
         if (!remoteResult.Success || remoteResult.Value is null)
         {
             error = remoteResult.ErrorMessage;
-            await InvokeAsync(StateHasChanged);
-            return;
         }
 
         var remote = remoteResult.Value;
-        Add(cpuUtilization, new(remote.Timestamp, local.CpuUtilizationPercent, remote.CpuUtilizationPercent));
-        Add(cpuTime, new(remote.Timestamp, local.CpuTimeSeconds, remote.CpuTimeSeconds));
-        Add(workingSet, new(remote.Timestamp, BytesToMebibytes(local.WorkingSetBytes), BytesToMebibytes(remote.WorkingSetBytes)));
+        var timestamp = remote?.Timestamp ?? DateTimeOffset.UtcNow;
+        Add(cpuUtilization, new(timestamp, !local.IsStale && local.CpuUtilizationAvailable ? local.CpuUtilizationPercent : null,
+            remote is { IsStale: false, CpuUtilizationAvailable: true } ? remote.CpuUtilizationPercent : null));
+        Add(cpuTime, new(timestamp, !local.IsStale && local.CpuTimeAvailable ? local.CpuTimeSeconds : null,
+            remote is { IsStale: false, CpuTimeAvailable: true } ? remote.CpuTimeSeconds : null));
+        Add(workingSet, new(timestamp, !local.IsStale && local.WorkingSetAvailable ? BytesToMebibytes(local.WorkingSetBytes) : null,
+            remote is { IsStale: false, WorkingSetAvailable: true } ? BytesToMebibytes(remote.WorkingSetBytes) : null));
         hasCollected = true;
-        error = null;
+        if (remote is { IsStale: false }) error = null;
+        else if (remote is { IsStale: true }) error = "Latest observation is stale.";
         await InvokeAsync(StateHasChanged);
     }
 

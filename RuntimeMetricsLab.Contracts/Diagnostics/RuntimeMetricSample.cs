@@ -6,4 +6,9 @@ public sealed record RuntimeMetricSample(
     double CpuUtilizationPercent,
     double CpuTimeSeconds,
     long WorkingSetBytes,
-    int ProcessorCount);
+    int ProcessorCount,
+    bool CpuTimeAvailable = false,
+    bool WorkingSetAvailable = false,
+    bool CpuUtilizationAvailable = false,
+    bool IsStale = true,
+    double? AverageCpuCores = null);

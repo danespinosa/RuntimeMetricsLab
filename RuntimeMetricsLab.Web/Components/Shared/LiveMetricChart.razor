@@ -21,8 +21,14 @@
             <line x1="64" y1="152" x2="980" y2="152" class="live-chart__grid" />
             <text x="58" y="29" text-anchor="end" class="live-chart__label">@Format(Maximum)</text>
             <text x="58" y="285" text-anchor="end" class="live-chart__label">@Format(Minimum)</text>
-            <polyline points="@ClientPolyline" class="live-chart__line live-chart__line--client" />
-            <polyline points="@ServerPolyline" class="live-chart__line live-chart__line--server" />
+            @foreach (var line in BuildPolylines(point => point.ClientValue))
+            {
+                <polyline points="@line" class="live-chart__line live-chart__line--client" />
+            }
+            @foreach (var line in BuildPolylines(point => point.ServerValue))
+            {
+                <polyline points="@line" class="live-chart__line live-chart__line--server" />
+            }
         </svg>
         <div class="live-chart__legend">
             <span><i class="live-chart__swatch live-chart__swatch--client"></i> Client process</span>
@@ -41,22 +47,21 @@
     [Parameter] public double? FixedMaximum { get; set; }
     [Parameter] public string FormatString { get; set; } = "0.##";
 
-    private double LatestClient => Points.LastOrDefault()?.ClientValue ?? 0;
-    private double LatestServer => Points.LastOrDefault()?.ServerValue ?? 0;
+    private double? LatestClient => Points.LastOrDefault()?.ClientValue;
+    private double? LatestServer => Points.LastOrDefault()?.ServerValue;
     private double Minimum => FixedMinimum ?? CalculateBounds().Minimum;
     private double Maximum => FixedMaximum ?? CalculateBounds().Maximum;
-    private string ClientPolyline => BuildPolyline(static point => point.ClientValue);
-    private string ServerPolyline => BuildPolyline(static point => point.ServerValue);
 
     private (double Minimum, double Maximum) CalculateBounds()
     {
-        if (Points.Count == 0)
+        var values = Points.SelectMany(point => new[] { point.ClientValue, point.ServerValue }).OfType<double>().ToArray();
+        if (values.Length == 0)
         {
             return (0, 1);
         }
 
-        var minimum = Points.Min(point => Math.Min(point.ClientValue, point.ServerValue));
-        var maximum = Points.Max(point => Math.Max(point.ClientValue, point.ServerValue));
+        var minimum = values.Min();
+        var maximum = values.Max();
         if (Math.Abs(maximum - minimum) < 0.0001)
         {
             return (Math.Max(0, minimum - 1), maximum + 1);
@@ -66,19 +71,26 @@
         return (Math.Max(0, minimum - padding), maximum + padding);
     }
 
-    private string BuildPolyline(Func<LiveMetricPoint, double> selector)
+    private IEnumerable<string> BuildPolylines(Func<LiveMetricPoint, double?> selector)
     {
         var minimum = Minimum;
         var range = Math.Max(0.0001, Maximum - minimum);
-        return string.Join(
-            " ",
-            Points.Select((point, index) =>
+        var segment = new List<string>();
+        for (var index = 0; index < Points.Count; index++)
+        {
+            var value = selector(Points[index]);
+            if (value is null)
             {
-                var x = 64 + index * 916d / Math.Max(1, Points.Count - 1);
-                var y = 280 - (selector(point) - minimum) / range * 256;
-                return $"{x:0.##},{Math.Clamp(y, 24, 280):0.##}";
-            }));
+                if (segment.Count > 1) yield return string.Join(" ", segment);
+                segment.Clear();
+                continue;
+            }
+            var x = 64 + index * 916d / Math.Max(1, Points.Count - 1);
+            var y = 280 - (value.Value - minimum) / range * 256;
+            segment.Add(FormattableString.Invariant($"{x:0.##},{y:0.##}"));
+        }
+        if (segment.Count > 1) yield return string.Join(" ", segment);
     }
 
-    private string Format(double value) => value.ToString(FormatString);
+    private string Format(double? value) => value?.ToString(FormatString) ?? "Unavailable";
 }

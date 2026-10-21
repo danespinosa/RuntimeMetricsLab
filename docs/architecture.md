@@ -1,6 +1,104 @@
 # Architecture
 
-## Component diagram (current state)
+## Modes
+
+`RuntimeMetricsLab:Mode` defaults to `standard`; `attribution` is the explicit
+Linux-only opt-in and `attribution-windows` selects native Windows processes.
+`AppHost.cs` selects the topology and rejects unknown mode names.
+The existing Windows/Linux four-resource comparison is unchanged by default.
+
+Native Windows replaces Linux namespaces/cgroup paths with typed process
+identity/creation time, actual token owner, processor-group/CPU-set/job metadata
+and local Windows storage. A non-elevated authenticated control proxy gates a
+small, explicitly consented/UAC-elevated launcher over a restricted named
+pipe. It invokes stock Microsoft PerfView rather than a custom ETW engine.
+PerfView's private raw ETL contains system-wide kernel events; FocusProcess
+limits non-kernel providers only. Offline analysis selects the fixed lab target.
+This elevated end-to-end path remains permission blocked until a real approved
+PerfView capture and calibration succeed; counters and allocation-only evidence must not
+be mislabeled as full method CPU attribution. See [Windows architecture and
+authorization](windows-attribution.md).
+
+Windows profile jobs now have a separate consent/elevation readiness lifecycle.
+The web job owns a server-circuit consent challenge, while the non-elevated proxy
+owns the durable generation-bound approval and asynchronous fixed `runas` launch.
+Approval/readiness waits do not spend the workload-duration timeout. Immutable
+attempt files, revocation/deadline/heartbeat checks and short live activation
+leases reject cancelled or late UAC starts. Readiness IO never holds the
+approval-state lock. Linux profile jobs and standard mode do not enter this gate.
+
+## Attribution topology
+
+```text
+Blazor client-linux (UID 1654; durable job service)
+  |-- authenticated target control --> server-linux (UID 1654)
+  |                                      named lessons + target-wide lease
+  |                                      raw monotonic runtime samples + call counts
+  |-- authenticated collector control --> attribution-collector
+  |                                      target-only PID namespace + shared /tmp
+  |                                      fixed OneCollect collect-linux command
+  `-- separate analysis worker (UID 1654; cleared environment, no control credentials)
+                                         typed TraceEvent adapter -> versioned report
+```
+
+`AttributionTopology.cs` and `Attribution.Dockerfile` wire the three containers.
+The analysis worker is a separate process in the client container, never in the
+measured server or privileged collector. Container CPU/memory quotas are unset.
+The UI and target run without capabilities. The collector's fixed bootstrap
+works around Docker 29 pre-start archive handling, makes its private parent
+tracefs bind read-only, and irreversibly drops temporary `SYS_ADMIN`/`SETPCAP`
+before the service opens a port. Runtime capabilities are exactly `PERFMON`,
+`SYS_PTRACE`, and `DAC_OVERRIDE`, with no-new-privileges and only
+`user_events_data` writable. Host mount flags and host security are unchanged.
+
+There is no host PID namespace, Docker socket in any application container,
+arbitrary command/PID/provider control endpoint, or machine-wide collection.
+Per-start credentials are separate for target and collector; health endpoints
+are non-sensitive, and published ports bind to loopback. Do not dump raw Aspire
+environment JSON: it can expose credentials even for secret parameters.
+
+### Capture and persistence
+
+`AttributionJobs` is a singleton background service, independent of Blazor
+circuits. It journals jobs atomically, honors idempotency keys, and admits one
+capture/analysis at a time. Private control clients intentionally bypass generic
+HTTP retry handlers for mutations. The target reserves one lease, warms methods,
+waits for actual marker-provider enablement, measures bounded work between
+nonce-bearing boundaries, and records recovery separately. All legacy workload
+routes, including gRPC, are disabled in attribution mode.
+
+The collector accepts only the fixed target alias, bounded duration and operation
+identity; it generates capture IDs and paths. It signals only its owned tracer,
+checks target start time/namespace, and atomically finalizes complete or explicitly
+partial artifacts. A `D + 30` capture budget covers up to 20 seconds of attachment,
+baseline, work and recovery; the maximum is 90 seconds. Early tracer completion
+and deadline/size violations fail visibly.
+
+Lab-scoped Docker named volumes are derived from the AppHost directory:
+
+| Volume | Contents / access |
+|---|---|
+| `rml-diagnostics-<lab>` | Shared target/collector `/tmp`; no host diagnostic directory |
+| `rml-captures-<lab>` | Collector-owned finalized trace/diagnostics; client/analysis read-only |
+| `rml-data-<lab>` | Durable jobs, immutable counter bundles, versioned reports and derived indexes |
+
+Capture bundles record schema, run/target identity, settings, runtime/build/cgroup
+metadata, raw samples, invocation counts, tool versions and artifact hashes.
+Reports use explicit covered CPU pools and independent allocation weights.
+Exact-signature/unique-module evidence reconciles tiered-JIT identities; ambiguous
+identities remain separate. Flat inclusive costs handle recursion without double
+counting; call-path trees retain distinct callers.
+
+Raw captures are immutable after finalization. Reanalysis adds a report revision.
+Interrupted jobs are not silently rerun; incomplete artifacts are preserved.
+Storage pressure stops new captures rather than deleting history. The worker
+has bounded input/event/frame/tree expansion and a finite time/working-set
+safeguard; a file-size bound is not claimed to be an equivalent memory cap.
+
+See [the attribution walkthrough](attribution-lab.md) for calculations, evidence
+quality (including unknown kernel loss), graphs and memory-ownership limitations.
+
+## Standard-mode component diagram
 
 ```
                                   ┌───────────────────────────────┐
@@ -69,7 +167,7 @@ configuration (`ServiceDefaults/Extensions.cs`), and all four reference
 - **ApiService** — the backend, run as both `server-windows` and `server-linux`.
   This is where experiment endpoints (e.g. "trigger a GC-heavy workload") live.
 - **Web** — the Blazor frontend, run as both `client-windows` and `client-linux`,
-  calling its paired server through `WeatherApiClient` over `https+http://apiservice`
+  calling its paired server through `ExperimentsApiClient` over `https+http://apiservice`
   (service-discovery scheme resolution — the discovery name `"apiservice"` is constant
   across both platform pairs even though the underlying resource names differ).
 - **Contracts** — shared plain types flowing between `ApiService`, `Web`, and
@@ -114,8 +212,8 @@ process for UI updates. Practically, this means, **for both `client-windows` and
 
 ## Windows process vs. Linux container: now a real, live comparison
 
-This is no longer a hypothetical caveat — the AppHost runs both variants on every
-`aspire run`, so this section describes what you'll actually observe:
+In default standard mode the AppHost runs both variants, so this section describes
+the normal comparison topology rather than the opt-in attribution topology:
 
 - `server-windows`/`client-windows` run as **native Windows processes** launched by
   the AppHost via `dotnet`. `server-linux`/`client-linux` run as **Linux containers**,
@@ -168,4 +266,3 @@ anything load-bearing:
    [`docs/metric-catalog.md`](metric-catalog.md)).
 4. Confirm both Dockerfiles' `COPY` lists still match the AppHost's project
    references before assuming a container build will succeed.
-

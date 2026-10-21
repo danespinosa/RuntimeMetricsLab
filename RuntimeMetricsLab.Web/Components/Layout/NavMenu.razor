@@ -1,4 +1,5 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
+﻿@inject IConfiguration Configuration
+<div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
         <a class="navbar-brand" href="">
             <span class="bi bi-speedometer2" aria-hidden="true"></span> RuntimeMetricsLab
@@ -10,6 +11,15 @@
 
 <div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
     <nav class="nav flex-column" aria-label="Main">
+        @if (Configuration["RuntimeMetricsLab:Mode"] is "attribution" or "attribution-windows")
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="attribution">CPU &amp; memory attribution</NavLink>
+            </div>
+            <div class="nav-item px-3 nav-footnote">Attribution mode: legacy workload entry points are disabled.</div>
+        }
+        else
+        {
         <div class="nav-item px-3">
             <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
                 <span class="bi bi-speedometer2" aria-hidden="true"></span> Overview
@@ -69,5 +79,6 @@
         <div class="nav-item px-3 nav-footnote">
             Metrics shown here describe the web host, not your browser.
         </div>
+        }
     </nav>
 </div>

@@ -12,6 +12,18 @@
     <ProjectReference Include="..\RuntimeMetricsLab.ServiceDefaults\RuntimeMetricsLab.ServiceDefaults.csproj" />
     <ProjectReference Include="..\RuntimeMetricsLab.Contracts\RuntimeMetricsLab.Contracts.csproj" />
     <ProjectReference Include="..\RuntimeMetricsLab.Experiments\RuntimeMetricsLab.Experiments.csproj" />
+    <ProjectReference Include="..\RuntimeMetricsLab.Analysis.Worker\RuntimeMetricsLab.Analysis.Worker.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
+
+  <Target Name="CopyAttributionWorker" AfterTargets="Build">
+    <ItemGroup>
+      <AttributionWorkerFiles Include="$(MSBuildThisFileDirectory)..\RuntimeMetricsLab.Analysis.Worker\bin\$(Configuration)\$(TargetFramework)\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(AttributionWorkerFiles)" DestinationFiles="@(AttributionWorkerFiles->'$(TargetDir)analysis\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="PublishAttributionWorker" AfterTargets="Publish">
+    <Copy SourceFiles="@(AttributionWorkerFiles)" DestinationFiles="@(AttributionWorkerFiles->'$(PublishDir)analysis\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

@@ -1,6 +1,21 @@
 #pragma warning disable ASPIRECERTIFICATES001 // HTTPS certificate configuration APIs are experimental.
 
 var builder = DistributedApplication.CreateBuilder(args);
+var mode = builder.Configuration["RuntimeMetricsLab:Mode"] ?? "standard";
+if (mode == "attribution")
+{
+    AttributionTopology.Add(builder);
+    builder.Build().Run();
+    return;
+}
+if (mode == "attribution-windows")
+{
+    WindowsAttributionTopology.Add(builder);
+    builder.Build().Run();
+    return;
+}
+if (mode != "standard")
+    throw new InvalidOperationException("RuntimeMetricsLab:Mode must be standard, attribution, or attribution-windows.");
 
 // RuntimeMetricsLab.Web's WeatherApiClient hard-codes its HttpClient BaseAddress to
 // "https+http://apiservice" (see WeatherApiClient.cs), so every client resource must inject its

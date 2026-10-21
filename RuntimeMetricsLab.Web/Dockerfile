@@ -15,6 +15,8 @@ COPY ["RuntimeMetricsLab.Web/RuntimeMetricsLab.Web.csproj", "RuntimeMetricsLab.W
 COPY ["RuntimeMetricsLab.ServiceDefaults/RuntimeMetricsLab.ServiceDefaults.csproj", "RuntimeMetricsLab.ServiceDefaults/"]
 COPY ["RuntimeMetricsLab.Contracts/RuntimeMetricsLab.Contracts.csproj", "RuntimeMetricsLab.Contracts/"]
 COPY ["RuntimeMetricsLab.Experiments/RuntimeMetricsLab.Experiments.csproj", "RuntimeMetricsLab.Experiments/"]
+COPY ["RuntimeMetricsLab.Analysis/RuntimeMetricsLab.Analysis.csproj", "RuntimeMetricsLab.Analysis/"]
+COPY ["RuntimeMetricsLab.Analysis.Worker/RuntimeMetricsLab.Analysis.Worker.csproj", "RuntimeMetricsLab.Analysis.Worker/"]
 RUN dotnet restore "RuntimeMetricsLab.Web/RuntimeMetricsLab.Web.csproj"
 
 # Now copy the rest of the referenced project sources and publish.
@@ -22,6 +24,8 @@ COPY ["RuntimeMetricsLab.Web/", "RuntimeMetricsLab.Web/"]
 COPY ["RuntimeMetricsLab.ServiceDefaults/", "RuntimeMetricsLab.ServiceDefaults/"]
 COPY ["RuntimeMetricsLab.Contracts/", "RuntimeMetricsLab.Contracts/"]
 COPY ["RuntimeMetricsLab.Experiments/", "RuntimeMetricsLab.Experiments/"]
+COPY ["RuntimeMetricsLab.Analysis/", "RuntimeMetricsLab.Analysis/"]
+COPY ["RuntimeMetricsLab.Analysis.Worker/", "RuntimeMetricsLab.Analysis.Worker/"]
 
 WORKDIR /src/RuntimeMetricsLab.Web
 RUN dotnet publish "RuntimeMetricsLab.Web.csproj" -c Release -o /app/publish --no-restore

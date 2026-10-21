@@ -11,6 +11,8 @@
   <ItemGroup>
     <ProjectReference Include="..\RuntimeMetricsLab.ApiService\RuntimeMetricsLab.ApiService.csproj" />
     <ProjectReference Include="..\RuntimeMetricsLab.Web\RuntimeMetricsLab.Web.csproj" />
+    <ProjectReference Include="..\RuntimeMetricsLab.Collector\RuntimeMetricsLab.Collector.csproj" />
+    <ProjectReference Include="..\RuntimeMetricsLab.Contracts\RuntimeMetricsLab.Contracts.csproj" IsAspireProjectResource="false" />
   </ItemGroup>
 
 </Project>

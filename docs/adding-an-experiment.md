@@ -134,3 +134,41 @@ test; that's what step 5's manual Dashboard check is for.
 - [ ] Unit test added for the experiment's logic.
 - [ ] `docs/metric-catalog.md` updated to reflect the verified (not assumed) meter
       names/units.
+
+## Adding an attribution lesson
+
+Attribution lessons have stronger constraints than ordinary dashboard experiments.
+Reuse `AttributionLessons`, `AttributionTarget`, the shared `RuntimeSampler`, and
+the durable job/collector protocol rather than exposing another workload route.
+
+- Validate duration/workers and reserve aggregate payload budgets across workers;
+  do not add container quotas.
+- Keep stable named synchronous teaching boundaries and observable outputs.
+  Count entered/completed calls explicitly with worker-local accounting. Never use
+  profiler sample counts or spin iterations as invocation denominators.
+- Keep warmup outside the measurement window; all workers start after the same
+  monotonic boundary and finish before its end. Preserve the target-wide lease
+  and disabled legacy entry points.
+- Same-thread allocation calibration must not cross `await`, thread hops, or
+  workers. Separate object payload from actual managed allocation.
+- Release retained references on success, cancellation and failure. A forced GC
+  must be a separately labeled recovery phase.
+- Extend fixed server-side lesson choices, not collector command/PID/provider
+  inputs. Collector authentication, namespace/identity checks and graceful
+  finalization must remain intact.
+- Add deterministic math/identity/tree tests and a real capture acceptance case.
+  Verify independent pre-scaling CPU/allocation evidence, not just normalized
+  totals. Test sparse/missing observations and denominator alignment.
+- Update `Attribution.Dockerfile` and solution/project publishing when dependencies
+  change; standard Dockerfiles remain the default four-resource path.
+
+The [attribution walkthrough](attribution-lab.md) documents the interpretation
+contract. Per-method native/retained/RSS ownership and cache/bandwidth attribution
+are outside this version's scope.
+
+Platform-specific collection belongs behind typed platform/format/provenance and
+storage boundaries. Windows lessons reuse the same accounting but do not read
+Linux proc/cgroup paths. Keep counter-only diagnostics distinct from real profiles,
+never silently substitute an EventPipe thread sampler, and do not enable an ETW
+system stream or elevate the UI to make a test pass. Windows collector consent
+and live-validation requirements are in [windows-attribution.md](windows-attribution.md).

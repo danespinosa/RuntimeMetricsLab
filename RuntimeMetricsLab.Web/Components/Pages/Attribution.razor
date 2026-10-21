@@ -1,0 +1,371 @@
+@page "/attribution"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@using RuntimeMetricsLab.Contracts.Attribution
+@inject IServiceProvider Services
+@inject NavigationManager Navigation
+@inject ILoggerFactory Loggers
+
+<PageTitle>CPU and memory attribution</PageTitle>
+<h1>CPU and memory attribution</h1>
+<p>Run a finite .NET lesson, capture real on-CPU and randomized allocation events, and analyze them locally.
+    The workload and analysis run unprivileged; only the separate collector receives profiling permissions.</p>
+@if (_jobs is null)
+{
+    <div class="alert alert-info">This is the standard Windows/Linux comparison lab. Enable the documented
+        <code>RuntimeMetricsLab:Mode=attribution</code> for Linux or <code>attribution-windows</code> for native Windows.
+        Standard mode remains the default.</div>
+}
+else
+{
+    <details open>
+        <summary>Prerequisites and evidence</summary>
+        <p><strong>@(_jobs.Mode == AttributionMode.Windows ? "Native Windows / stock Microsoft PerfView" : "Linux container / OneCollect collect-linux")</strong></p>
+        <p>@(_capability is null ? "Checking private collector and target..." : _capability.Available ? "Preflight available. Real provider attachment and trace evidence are verified for every run." : _capability.Error)</p>
+        @if (_capability is not null)
+        {
+            <ul>@foreach (var evidence in _capability.Evidence) { <li>@evidence</li> }</ul>
+            @if (_capability.Remediation is not null)
+            {
+                <p class="alert alert-warning" role="alert">@_capability.Remediation</p>
+            }
+        }
+        <button class="btn btn-outline-secondary" @onclick="RefreshCapabilities">Refresh prerequisites</button>
+    </details>
+    <div class="card p-3 my-3">
+        <div class="row g-3">
+            <label class="col-md-4">Lesson
+                <select class="form-select" @bind="_lesson" disabled="@Busy" aria-label="Lesson">
+                    <option value="cpu">CPU attribution</option><option value="allocation">Allocation churn</option>
+                    <option value="retention">Retain and release</option><option value="mixed">Mixed CPU, allocation and waiting</option>
+                </select>
+            </label>
+            <label class="col-md-2">Workers<input class="form-control" type="number" min="1" max="32" @bind="_workers" disabled="@Busy" /></label>
+            <label class="col-md-2">Duration (seconds)<input class="form-control" type="number" min="1" max="60" @bind="_duration" disabled="@Busy" /></label>
+            <label class="col-md-2">Allocation budget (MiB)<input class="form-control" type="number" min="1" max="256" @bind="_allocationMiB" disabled="@Busy" /></label>
+            <label class="col-md-2">Retained payload cap (MiB)<input class="form-control" type="number" min="1" max="64" @bind="_retainedMiB" disabled="@Busy" /></label>
+        </div>
+        <p class="mt-2">No container CPU or memory quotas are imposed. Payload budgets are aggregate across all workers; object headers, runtime allocations, and analysis memory are separate.</p>
+        <div>
+            <button class="btn btn-primary" disabled="@(Busy || (_jobs.Mode != AttributionMode.Windows && _capability?.Available != true))" @onclick="Run">Run and analyze</button>
+            @if (_jobs.Mode == AttributionMode.Windows)
+            {
+                <button class="btn btn-outline-secondary" disabled="@Busy" @onclick="RunDiagnostic">Run counters only (no CPU attribution)</button>
+                <p>This separate diagnostic does not start ETW or request elevation. It measures process counters, named calls and same-thread allocation only;
+                    it cannot produce a method CPU profile or flame graph and is never substituted for Run and analyze.</p>
+            }
+            @if (_current is { IsTerminal: false })
+            {
+                <button class="btn btn-outline-danger" @onclick="Cancel">Cancel capture and analysis</button>
+            }
+        </div>
+    </div>
+    @if (_error is not null) { <p class="alert alert-danger" role="alert">@_error</p> }
+    @if (_current is not null)
+    {
+        <p role="status" aria-live="polite"><strong>Job @_current.Id: @_current.Phase</strong> @_current.DetailPhase @_current.Error</p>
+        @if (!_current.IsTerminal && _current.ProfilerApproval is { } approval)
+        {
+            <section class="card p-3 my-3 border-warning" aria-label="Windows profiler approval">
+                @if (approval.Phase == ProfilerApprovalPhase.AwaitingConsent)
+                {
+                    <h2>Approve the Windows profiler scope</h2>
+                    <p>The collector uses the <strong>actual Microsoft PerfView 3.2.8 executable</strong>, not a custom ETW engine.
+                        <strong>The raw local ETL includes system-wide kernel CPU, process, thread and image events, including other processes.</strong>
+                        PerfView's FocusProcess limits non-kernel CLR/marker providers; it does not make raw CPU tracing target-only.
+                        Only the lab target appears in the offline method report. Raw bundles stay private and local, including downloads.</p>
+                    <p><strong>Only the small authenticated launcher and stock PerfView run elevated.</strong> The workload, app, and analysis stay non-elevated.
+                        Accepting opens the normal Windows UAC prompt; you must approve that secure dialog yourself.
+                        No workload or CPU collection starts while waiting. The lab never accepts PerfView's EULA for you.</p>
+                    <p>PerfView owns its standard CPU sampling, 256-MiB buffers, bounded collection, CLR rundown and merge.
+                        Cancellation stops the workload immediately; PerfView finishes its finite collection interval and rundown/merge.
+                        It may take longer than the measured lesson. Do not close the collector while it is finalizing.</p>
+                    <p>This authorization can be reused for later profiled runs while the authenticated collector remains valid
+                        (at most one hour, or until this app's collector control stops). Declining keeps this run cancelled.</p>
+                    <p>Consent expires at @approval.DeadlineUtc.ToLocalTime(). Registration @approval.RegistrationGeneration.</p>
+                    <button class="btn btn-primary" disabled="@(_accepting || _consentChallenge is null)" @onclick="AcceptProfilerScope">
+                        Accept scope and request Windows approval
+                    </button>
+                    <button class="btn btn-outline-secondary" disabled="@_accepting" @onclick="Cancel">Decline and cancel run</button>
+                }
+                else if (approval.Phase == ProfilerApprovalPhase.AwaitingElevation)
+                {
+                    <h2>Waiting for Windows UAC approval</h2>
+                    <p>Respond to the Windows secure approval dialog for the collector. The app remains responsive and has not prepared or run the workload.
+                        This wait expires at @approval.DeadlineUtc.ToLocalTime().</p>
+                    <p>You can cancel this run below, but the app cannot dismiss the OS dialog. If you approve it after cancellation or expiry,
+                        the stale collector authorization is rejected; the cancelled workload will not resume.</p>
+                }
+                else if (approval.Phase == ProfilerApprovalPhase.WaitingProfilerReady)
+                {
+                    <h2>Waiting for the authenticated profiler</h2>
+                    <p>Windows started the collector process; that alone is not readiness. The app is verifying its identity, current authorization
+                        and real collector preflight before preparing any work. Deadline: @approval.DeadlineUtc.ToLocalTime().</p>
+                }
+                else if (approval.Phase == ProfilerApprovalPhase.Ready)
+                {
+                    <p>@(approval.ReusedBroker ? "Reusing the authenticated collector approved earlier in this bounded lifetime." :
+                        "The approved collector is authenticated and ready.") The real profiler is attached before the measurement window begins.</p>
+                }
+            </section>
+        }
+        @if (_current.IsTerminal && _current.Kind == AttributionRunKind.Profile)
+        {
+            <button class="btn btn-outline-secondary" disabled="@Busy" @onclick="Reanalyze">Reanalyze saved bundle locally</button>
+        }
+        @if (_diagnostic is not null)
+        {
+            <section class="card p-3 my-3" aria-label="Counter-only Windows diagnostic">
+                <h2>Counter-only diagnostic - no method CPU attribution</h2>
+                <p class="alert alert-warning">@_diagnostic.Limitation</p>
+                <p>Native Windows process averaged <strong>@Number(_diagnostic.ProcessAverageCores) logical CPU cores</strong>
+                    over @Number(_diagnostic.Seconds) monotonic seconds; CPU @Number(_diagnostic.ProcessCpuSeconds) s,
+                    approximate allocation @Bytes(_diagnostic.AllocatedBytes).</p>
+                <p>These are real counter/workload observations, not ETW profile results. Method CPU cores, CPU ms/call and sampled allocation costs are unavailable.</p>
+                <table class="table table-sm"><thead><tr><th>Instrumented method</th><th>Entered</th><th>Completed</th><th>Measured same-thread inclusive allocated bytes</th></tr></thead>
+                    <tbody>@foreach (var calls in _diagnostic.Measurement.Calls)
+                    {
+                        <tr><td>@calls.Method</td><td>@calls.Entered</td><td>@calls.Completed</td><td>@calls.SameThreadAllocatedBytes</td></tr>
+                    }</tbody>
+                </table>
+                <a href="@($"/api/attribution/jobs/{_diagnostic.JobId}/counter-diagnostic")" download>Download counter-only evidence JSON</a>
+                <AttributionCharts Samples="_diagnostic.Measurement.Samples" Frequency="_diagnostic.Measurement.Window.Frequency"
+                                   ProcessorCount="_diagnostic.Measurement.Identity.ProcessorCount" />
+            </section>
+        }
+    }
+    @if (_report is not null)
+    {
+        <section aria-label="Attribution report">
+            <h2>Measured process and estimated method costs</h2>
+            <p>Platform: @_report.Identity.Platform. Collector: @AttributionModes.Provenance(_report.Collector).Collector.
+                Format: @AttributionModes.Provenance(_report.Collector).Format. Scope: @AttributionModes.Provenance(_report.Collector).CpuScope</p>
+            <p>Saved report revision @_report.Revision. Rebuilding creates a new report without changing the raw capture.</p>
+            <p class="alert alert-primary" id="core-summary">
+                Process averaged <strong>@Number(_report.Process.AverageCores) CPU cores</strong>;
+                @if (Selected is { } summaryMethod)
+                {
+                    <span>selected method averaged <strong>@Number(summaryMethod.SelfAverageCores) estimated self cores</strong>
+                        (@Number(summaryMethod.ProcessCpuShare * 100)% of process CPU).</span>
+                }
+            </p>
+            <p>Same window: @_report.Window.Start.Utc.ToString("O") to @_report.Window.End.Utc.ToString("O"),
+                <strong>@Number(_report.Process.Seconds) monotonic seconds</strong>.
+                @Number(_report.Process.PercentOfOneCore)% of one core; @Number(_report.Process.PercentOfRuntimeCapacity)%
+                of @_report.Identity.ProcessorCount runtime-visible CPUs. CPU core-equivalents are consumption, not fixed core ownership.</p>
+            <div class="row">
+                <div class="col-md-4"><strong>Measured process CPU:</strong> @Number(_report.Process.CpuSeconds) s</div>
+                <div class="col-md-4"><strong>Approximate process allocation:</strong> @Bytes(_report.Process.AllocatedBytes)</div>
+                <div class="col-md-4"><strong>Process allocation rate:</strong> @Bytes(_report.Process.AllocationBytesPerSecond)/s</div>
+            </div>
+            <p><a href="@($"/api/attribution/jobs/{_report.JobId}/report")" download>Download report JSON</a> |
+                <a href="@($"/api/attribution/jobs/{_report.JobId}/bundle")" download>Download local capture bundle</a></p>
+            <details open>
+                <summary>Evidence quality and independent calibration</summary>
+                <p>@_report.EventsLost parser-reported lost events; kernel loss counts @(_report.Collector.KernelLostEvents?.ToString() ?? "not reported").
+                    Nominal sampled CPU: @Number(_report.Process.NominalSampledCpuSeconds) s;
+                    pre-scaling CPU ratio @Number(_report.Process.CpuSamplingRatio);
+                    independent allocation ratio @Number(_report.Process.AllocationSamplingRatio).</p>
+                <ul>@foreach (var notice in _report.Quality) { <li><strong>@notice.Severity / @notice.Code:</strong> @notice.Explanation</li> }</ul>
+            </details>
+            <AttributionGraphs Report="_report" @bind-SelectedKey="_selectedKey" />
+            @if (Selected is { } selected)
+            {
+                <section class="card p-3 my-3" aria-label="Selected method details">
+                    <h3>@selected.Method</h3>
+                    <p>@selected.Module - @selected.Category. Self excludes descendants; inclusive includes them and overlaps other rows.</p>
+                    <table class="table table-sm">
+                        <thead><tr><th>Quantity</th><th>Self</th><th>Inclusive / supporting evidence</th></tr></thead>
+                        <tbody>
+                            <tr><th>Estimated average CPU cores</th><td>@Number(selected.SelfAverageCores)</td><td>@Number(selected.InclusiveAverageCores)</td></tr>
+                            <tr><th>Estimated CPU time (ms)</th><td>@Number(selected.SelfCpuMilliseconds)</td><td>@Number(selected.InclusiveCpuMilliseconds)</td></tr>
+                            <tr><th>Independently estimated allocated bytes</th><td>@Bytes(selected.AllocatedBytes)</td><td>@Bytes(selected.InclusiveAllocatedBytes)</td></tr>
+                            <tr><th>Estimated allocation rate</th><td>@Bytes(selected.AllocationBytesPerSecond)/s</td><td>Same @Number(_report.Process.Seconds) s window</td></tr>
+                            <tr><th>Measured completed calls</th><td>@(selected.CompletedCalls?.ToString() ?? "Not instrumented/aligned")</td><td>Never profiler sample count</td></tr>
+                            <tr><th>Estimated self CPU ms/call</th><td>@Number(selected.CpuMillisecondsPerCall)</td><td>Not inclusive operation CPU cost</td></tr>
+                            <tr><th>Estimated self allocated bytes/call</th><td>@Bytes(selected.AllocatedBytesPerCall)</td><td>Not inclusive operation allocation cost</td></tr>
+                            <tr><th>Raw on-CPU weight / allocation events</th><td>@selected.CpuSamples / @selected.AllocationSamples</td><td>Zero observations are not proof of zero cost</td></tr>
+                            <tr><th>Measured same-thread inclusive allocation</th><td>@Bytes(selected.SameThreadAllocatedBytes)</td><td>Calibration includes descendants; excludes native memory</td></tr>
+                        </tbody>
+                    </table>
+                    <p>Selected method self CPU uses its on-CPU sample share of the covered process CPU pool, divided by this same window.
+                        Allocation uses randomized event byte weights independently of CPU share. Missing per-call values indicate uninstrumented,
+                        incomplete, sparse, or insufficient calibration evidence; waiting is not charged as CPU time.</p>
+                </section>
+            }
+            <h3>Method table and search</h3>
+            <label>Search methods<input class="form-control" @bind="_search" @bind:event="oninput" placeholder="Method or module" /></label>
+            <div style="overflow:auto;max-height:26rem">
+                <table class="table table-sm">
+                    <caption>Self costs; inclusive costs and independent calibration are in the selected method panel. Instrumented methods without samples remain listed.</caption>
+                    <thead><tr><th>Method</th><th>Self cores</th><th>Inclusive cores</th><th>Estimated allocated bytes</th><th>Bytes/s</th><th>Calls</th><th>Self CPU ms/call</th><th>Self B/call</th></tr></thead>
+                    <tbody>@foreach (var method in _report.Methods.Where(Matches))
+                    {
+                        <tr><td><button class="btn btn-sm btn-link text-start" @onclick="() => _selectedKey = method.Key">@method.Method</button></td>
+                            <td>@Number(method.SelfAverageCores)</td><td>@Number(method.InclusiveAverageCores)</td>
+                            <td>@Bytes(method.AllocatedBytes)</td><td>@Bytes(method.AllocationBytesPerSecond)</td><td>@method.CompletedCalls</td>
+                            <td>@Number(method.CpuMillisecondsPerCall)</td><td>@Bytes(method.AllocatedBytesPerCall)</td></tr>
+                    }</tbody>
+                </table>
+            </div>
+            <AttributionCharts Samples="_report.Samples" Frequency="_report.Window.Frequency" ProcessorCount="_report.Identity.ProcessorCount" />
+            <details><summary>Deterministic explanations and target environment</summary>
+                @foreach (var explanation in _report.Explanations) { <p>@explanation</p> }
+                <p>Target instance @_report.Identity.InstanceId, PID @_report.Identity.ProcessId, namespace @_report.Identity.PidNamespace,
+                    runtime @_report.Identity.Runtime. Adapter @_report.AdapterVersion.</p>
+                <dl>@foreach (var pair in _report.Identity.Environment) { <dt>@pair.Key</dt><dd>@(pair.Value ?? "Unavailable")</dd> }</dl>
+            </details>
+        </section>
+    }
+    <h2>Persistent local history</h2>
+    <p>Closing this page does not cancel a job. Finalized traces and reports survive UI and application restarts.</p>
+    <table class="table"><thead><tr><th>Created</th><th>Lesson</th><th>State</th><th>Saved job</th></tr></thead>
+        <tbody>@foreach (var job in _history)
+        {
+            <tr><td>@job.Created.ToLocalTime()</td><td>@job.Settings.Lesson / @job.Settings.Workers workers</td><td>@job.Phase</td>
+                <td><button class="btn btn-link" @onclick="() => Open(job.Id)">@job.Id</button></td></tr>
+        }</tbody>
+    </table>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "job")] public Guid? JobId { get; set; }
+    private AttributionJobs? _jobs;
+    private CapabilityStatus? _capability;
+    private AttributionJob[] _history = [];
+    private AttributionJob? _current;
+    private AttributionReport? _report;
+    private CounterDiagnosticReport? _diagnostic;
+    private string _lesson = "cpu", _search = "";
+    private int _workers = 1, _duration = 5, _allocationMiB = 64, _retainedMiB = 16;
+    private string? _error, _selectedKey;
+    private string? _consentChallenge;
+    private Guid _challengeJob, _challengeRegistration;
+    private bool _accepting;
+    private readonly CancellationTokenSource _stop = new();
+    private Task? _poll;
+    private bool Busy => _history.Any(job => !job.IsTerminal);
+    private MethodCosts? Selected => _report?.Methods.FirstOrDefault(method => method.Key == _selectedKey);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _jobs = Services.GetService<AttributionJobs>();
+        if (_jobs is null) return;
+        _capability = await _jobs.Capabilities(_stop.Token);
+        Refresh();
+        _poll = Poll();
+    }
+    protected override void OnParametersSet()
+    {
+        if (JobId is { } id && _jobs is not null && _current?.Id != id) Load(id);
+    }
+    private void Refresh()
+    {
+        _history = _jobs!.History();
+        var id = JobId ?? _current?.Id ?? _history.FirstOrDefault()?.Id;
+        if (id is { } value) Load(value);
+    }
+    private void Load(Guid id)
+    {
+        var job = _history.FirstOrDefault(item => item.Id == id);
+        if (job is null) { _error = "The requested saved job is not in this lab's history."; return; }
+        if (_current?.Id != id) { _report = null; _diagnostic = null; _selectedKey = null; _consentChallenge = null; }
+        _current = job;
+        if (!job.IsTerminal && job.Phase == "awaiting-consent" &&
+            job.ProfilerApproval is { Phase: ProfilerApprovalPhase.AwaitingConsent } approval &&
+            (_consentChallenge is null || _challengeJob != id || _challengeRegistration != approval.RegistrationGeneration))
+        {
+            try
+            {
+                _consentChallenge = _jobs!.CreateProfilerConsentChallenge(id);
+                _challengeJob = id;
+                _challengeRegistration = approval.RegistrationGeneration;
+            }
+            catch (InvalidOperationException exception) { _error = exception.Message; }
+        }
+        if (job.Kind == AttributionRunKind.CounterDiagnostic && job.IsTerminal)
+            _diagnostic ??= _jobs!.DiagnosticReport(id);
+        else if ((_report is null || job.ReportRevision > _report.Revision) && job.IsTerminal)
+        {
+            _report = _jobs!.Report(id);
+            _selectedKey = _report?.Methods.FirstOrDefault(method => method.Category == "lab" && method.SelfAverageCores > 0)?.Key
+                ?? _report?.Methods.FirstOrDefault(method => method.Category == "lab")?.Key;
+        }
+    }
+    private void Open(Guid id) { _error = null; Load(id); Navigation.NavigateTo($"/attribution?job={id}", replace: true); }
+    private void Run() => StartRun(AttributionRunKind.Profile);
+    private void RunDiagnostic() => StartRun(AttributionRunKind.CounterDiagnostic);
+    private void StartRun(AttributionRunKind kind)
+    {
+        try
+        {
+            _error = null;
+            var job = _jobs!.Start(new(Guid.NewGuid(), new(_lesson, _workers, _duration, _allocationMiB, _retainedMiB), kind));
+            _history = _jobs.History();
+            Open(job.Id);
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or IOException)
+        {
+            Loggers.CreateLogger("AttributionPage").LogWarning(exception, "Attribution start rejected");
+            _error = exception.Message;
+        }
+    }
+    private async Task RefreshCapabilities() => _capability = await _jobs!.Capabilities(_stop.Token);
+    private async Task AcceptProfilerScope()
+    {
+        if (_current is null || _consentChallenge is null || _accepting) return;
+        _accepting = true;
+        try
+        {
+            await _jobs!.AcceptProfilerConsent(_current.Id, _consentChallenge, _stop.Token);
+            _error = null;
+            Refresh();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or UnauthorizedAccessException or HttpRequestException or TaskCanceledException)
+        {
+            Loggers.CreateLogger("AttributionPage").LogWarning(exception, "Profiler scope decision was not accepted");
+            _error = exception.Message;
+        }
+        finally { _accepting = false; }
+    }
+    private void Cancel() { if (_current is not null) { _jobs!.Cancel(_current.Id); Refresh(); } }
+    private void Reanalyze()
+    {
+        try
+        {
+            if (_current is null) return;
+            _jobs!.Reanalyze(_current.Id);
+            _error = null;
+            Refresh();
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or IOException)
+        {
+            Loggers.CreateLogger("AttributionPage").LogWarning(exception, "Report rebuilding rejected");
+            _error = exception.Message;
+        }
+    }
+    private bool Matches(MethodCosts method) => string.IsNullOrWhiteSpace(_search) ||
+        method.Method.Contains(_search, StringComparison.OrdinalIgnoreCase) || method.Module.Contains(_search, StringComparison.OrdinalIgnoreCase);
+    private static string Number(double? value) => value?.ToString("0.######") ?? "Unavailable";
+    private static string Bytes(double? value) => value switch
+    {
+        null => "Unavailable", >= 1024 * 1024 * 1024 => $"{value / (1024 * 1024 * 1024):0.###} GiB",
+        >= 1024 * 1024 => $"{value / (1024 * 1024):0.###} MiB", >= 1024 => $"{value / 1024:0.###} KiB", _ => $"{value:0.###} B"
+    };
+    private async Task Poll()
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(500));
+            while (await timer.WaitForNextTickAsync(_stop.Token))
+                await InvokeAsync(() => { Refresh(); StateHasChanged(); });
+        }
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
+        catch (Exception exception)
+        {
+            Loggers.CreateLogger("AttributionPage").LogError(exception, "Saved job refresh failed");
+            await InvokeAsync(() => { _error = "Saved history refresh failed: " + exception.Message; StateHasChanged(); });
+        }
+    }
+    public async ValueTask DisposeAsync() { _stop.Cancel(); if (_poll is not null) await _poll; _stop.Dispose(); }
+}

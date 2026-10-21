@@ -1,0 +1,38 @@
+@using RuntimeMetricsLab.Contracts.Attribution
+
+<li role="treeitem" aria-expanded="@(Node.Children.Length > 0 ? Expanded.Contains(Node.Id) : (bool?)null)"
+    aria-selected="@(SelectedNodeId == Node.Id)">
+    <div class="d-flex gap-1 align-items-start">
+        @if (Node.Children.Length > 0)
+        {
+            <button class="btn btn-sm btn-outline-secondary" aria-label="@($"{(Expanded.Contains(Node.Id) ? "Collapse" : "Expand")} {Node.Name}")"
+                    @onclick="() => Toggle.InvokeAsync(Node.Id)">@(Expanded.Contains(Node.Id) ? "-" : "+")</button>
+        }
+        <button class="btn btn-sm text-start @(SelectedNodeId == Node.Id ? "btn-primary" : "btn-light")"
+                @onclick="() => Selected.InvokeAsync(Node)">
+            @Node.Name <strong>@Format(Node)</strong>
+        </button>
+    </div>
+    @if (Expanded.Contains(Node.Id))
+    {
+        <ul role="group" style="list-style:none;padding-left:1rem">
+            @foreach (var child in Node.Children.Where(Visible).OrderByDescending(Weight))
+            {
+                <AttributionTreeNode @key="child.Id" Node="child" SelectedKey="@SelectedKey" SelectedNodeId="@SelectedNodeId" Expanded="Expanded"
+                                     Format="Format" Weight="Weight" Visible="Visible" Toggle="Toggle" Selected="Selected" />
+            }
+        </ul>
+    }
+</li>
+
+@code {
+    [Parameter, EditorRequired] public CallNode Node { get; set; } = null!;
+    [Parameter] public string? SelectedKey { get; set; }
+    [Parameter] public string? SelectedNodeId { get; set; }
+    [Parameter, EditorRequired] public HashSet<string> Expanded { get; set; } = [];
+    [Parameter, EditorRequired] public Func<CallNode, string> Format { get; set; } = null!;
+    [Parameter, EditorRequired] public Func<CallNode, double> Weight { get; set; } = null!;
+    [Parameter, EditorRequired] public Func<CallNode, bool> Visible { get; set; } = null!;
+    [Parameter] public EventCallback<string> Toggle { get; set; }
+    [Parameter] public EventCallback<CallNode> Selected { get; set; }
+}

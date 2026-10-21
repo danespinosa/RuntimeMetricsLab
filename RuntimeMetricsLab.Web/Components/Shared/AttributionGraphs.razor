@@ -1,0 +1,170 @@
+@using RuntimeMetricsLab.Contracts.Attribution
+@using System.Globalization
+
+<div class="d-flex gap-3 flex-wrap my-3">
+    <label>Cost view
+        <select class="form-select" @bind="_view" @bind:after="ChangeView" aria-label="Cost view">
+            <option value="cpu">CPU</option>
+            <option value="allocation">Allocated bytes</option>
+        </select>
+    </label>
+    <label>Graph units
+        <select class="form-select" @bind="_unit" aria-label="Graph units">
+            @if (_view == "cpu")
+            {
+                <option value="cores">Average cores</option>
+                <option value="ms">CPU milliseconds</option>
+            }
+            else
+            {
+                <option value="bytes">Estimated bytes</option>
+                <option value="rate">Estimated bytes/second</option>
+            }
+        </select>
+    </label>
+    <div class="align-self-end">
+        <button class="btn btn-outline-secondary" @onclick="ResetZoom">Reset flame zoom</button>
+        <button class="btn btn-outline-secondary" disabled="@(_selectedNode is null)" @onclick="Zoom">Zoom selected call path</button>
+    </div>
+</div>
+<p>Both views use the same saved call-path model and window. Width is aggregate cost, not time on a timeline.
+    Inclusive rows overlap; do not add them. Select a node with a mouse or Enter/Space.</p>
+@if (_view == "cpu" && Report.Process.CoveredCpuSeconds is null)
+{
+    <p class="alert alert-warning">Absolute CPU cost is unavailable. Graph widths and labels show raw on-CPU sample weights, not invented core estimates.</p>
+}
+<div class="row">
+    <section class="col-xl-5">
+        <h3>Expandable call tree</h3>
+        <div style="max-height:30rem;overflow:auto">
+            <ul role="tree" aria-label="Attribution call tree" style="list-style:none;padding-left:0">
+                <AttributionTreeNode Node="Report.Tree" SelectedKey="@SelectedKey" SelectedNodeId="@_selectedNode?.Id" Expanded="_expanded"
+                                     Format="FormatNode" Weight="Weight" Visible="Visible" Toggle="Toggle" Selected="SelectNode" />
+            </ul>
+        </div>
+    </section>
+    <section class="col-xl-7">
+        <h3>Local flame graph</h3>
+        <div style="max-height:30rem;overflow:auto">
+            @if (Weight(_zoom ?? Report.Tree) <= 0)
+            {
+                <p>No observations for this cost view. Zero observed samples do not establish zero actual cost.</p>
+            }
+            else
+            {
+                var cells = Cells();
+                <svg viewBox="@($"0 0 1000 {Math.Max(48, (cells.Max(cell => cell.Depth) + 1) * 24)}")"
+                     role="group" aria-label="@($"{_view} flame graph; {UnitLabel}")" style="width:100%;min-width:650px">
+                    @foreach (var cell in cells)
+                    {
+                        <g role="button" tabindex="0" aria-label="@($"{cell.Node.Name}: {FormatNode(cell.Node)}")"
+                           @onclick="() => SelectNode(cell.Node)" @onkeydown="e => Key(e, cell.Node)">
+                            <title>@cell.Node.Name: @FormatNode(cell.Node)</title>
+                            <rect x="@Svg(cell.X)" y="@(cell.Depth * 24)" width="@Svg(cell.Width)" height="22"
+                                  fill="@(cell.Node.Id == _selectedNode?.Id ? "#1555a2" : _view == "cpu" ? "#efae6c" : "#78c6ac")"
+                                  stroke="#fff" stroke-width="1" />
+                            @if (cell.Width > 95)
+                            {
+                                <g>
+                                <text x="@Svg(cell.X + 4)" y="@(cell.Depth * 24 + 16)" font-size="12"
+                                      fill="@(cell.Node.Id == _selectedNode?.Id ? "#fff" : "#18232e")" pointer-events="none">
+                                    @ShortName(cell.Node.Name, (int)(cell.Width / 7))
+                                </text>
+                                </g>
+                            }
+                        </g>
+                    }
+                </svg>
+                @if (cells.Count >= 2000)
+                {
+                    <p class="alert alert-info">This viewport displays at most 2,000 rectangles. Zoom a selected call path to inspect deeper work; the saved model and tree totals are not truncated.</p>
+                }
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AttributionReport Report { get; set; } = null!;
+    [Parameter] public string? SelectedKey { get; set; }
+    [Parameter] public EventCallback<string> SelectedKeyChanged { get; set; }
+    private readonly HashSet<string> _expanded = ["root"];
+    private Guid _job;
+    private int _revision;
+    private string _view = "cpu", _unit = "cores";
+    private CallNode? _selectedNode, _zoom;
+    private string? _expandedSelection;
+    private string UnitLabel => _view == "cpu" ? Report.Process.CoveredCpuSeconds is null ? "samples" : _unit == "cores" ? "average cores" : "CPU ms"
+        : _unit == "rate" ? "estimated B/s" : "estimated B";
+
+    protected override void OnParametersSet()
+    {
+        if (_job != Report.JobId || _revision != Report.Revision)
+        {
+            _job = Report.JobId; _revision = Report.Revision; _zoom = null; _selectedNode = null;
+            _expanded.Clear(); _expanded.Add("root"); _expandedSelection = null;
+        }
+        if (_expandedSelection == SelectedKey) return;
+        _expandedSelection = SelectedKey;
+        var path = new List<CallNode>();
+        if (FindPath(Report.Tree, SelectedKey, null, path))
+        {
+            _selectedNode = path[^1];
+            foreach (var node in path) _expanded.Add(node.Id);
+        }
+        else _selectedNode = null;
+    }
+    private static bool FindPath(CallNode node, string? key, string? nodeId, List<CallNode> path)
+    {
+        path.Add(node);
+        if (nodeId is not null ? node.Id == nodeId : node.MethodKey == key) return true;
+        foreach (var child in node.Children) if (FindPath(child, key, nodeId, path)) return true;
+        path.RemoveAt(path.Count - 1);
+        return false;
+    }
+    private double Weight(CallNode node) => _view == "cpu" ? node.CpuWeight : node.AllocationBytes;
+    private bool Visible(CallNode node) => Weight(node) > 0;
+    private string FormatNode(CallNode node)
+    {
+        var value = Weight(node);
+        if (_view == "cpu" && Report.Process.CoveredCpuSeconds is { } cpu && Report.Tree.CpuWeight > 0)
+            value *= _unit == "cores" ? cpu / Report.Process.Seconds / Report.Tree.CpuWeight : cpu * 1000 / Report.Tree.CpuWeight;
+        else if (_view == "allocation" && _unit == "rate") value /= Report.Process.Seconds;
+        return $"{value:0.######} {UnitLabel}";
+    }
+    private async Task SelectNode(CallNode node)
+    {
+        _selectedNode = node;
+        _expandedSelection = node.MethodKey;
+        var path = new List<CallNode>();
+        if (FindPath(Report.Tree, null, node.Id, path))
+            foreach (var ancestor in path) _expanded.Add(ancestor.Id);
+        await SelectedKeyChanged.InvokeAsync(node.MethodKey);
+    }
+    private Task Key(KeyboardEventArgs args, CallNode node) => args.Key is "Enter" or " " ? SelectNode(node) : Task.CompletedTask;
+    private void Toggle(string id) { if (!_expanded.Add(id)) _expanded.Remove(id); }
+    private void Zoom() => _zoom = _selectedNode;
+    private void ResetZoom() => _zoom = null;
+    private void ChangeView() { _unit = _view == "cpu" ? "cores" : "bytes"; _zoom = null; }
+    private static string Svg(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+    private static string ShortName(string name, int length) => name.Length <= length ? name : name[..Math.Max(1, length - 3)] + "...";
+    private sealed record Cell(CallNode Node, double X, double Width, int Depth);
+    private List<Cell> Cells()
+    {
+        var cells = new List<Cell>();
+        var root = _zoom ?? Report.Tree;
+        var total = Weight(root);
+        Add(root, 0, 0);
+        return cells;
+        void Add(CallNode node, double x, int depth)
+        {
+            if (cells.Count >= 2000 || Weight(node) <= 0) return;
+            cells.Add(new(node, x, Weight(node) / total * 1000, depth));
+            foreach (var child in node.Children.OrderByDescending(Weight))
+            {
+                Add(child, x, depth + 1);
+                x += Weight(child) / total * 1000;
+            }
+        }
+    }
+}

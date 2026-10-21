@@ -9,6 +9,27 @@ Linux-container side by side. The Aspire AppHost orchestrates all four resources
 locally and the Aspire Dashboard is the primary tool for inspecting the metrics,
 traces, and logs produced.
 
+An opt-in **Linux CPU/memory attribution mode** adds a real one-button
+OneCollect-backed capture, automatic local analysis, persistent reports, linked
+call tree/flame graph, and measured process cores versus estimated method cores.
+The four-resource Windows/Linux comparison remains the default.
+
+The new **native Windows mode** is `RuntimeMetricsLab:Mode=attribution-windows`.
+Its non-elevated lessons/counters and target-only allocation capture are verified;
+Windows collection now invokes **stock Microsoft PerfView 3.2.8**, replacing the
+custom ETW engine. **Live Windows attribution still requires a successful
+user-approved PerfView capture and calibration.** Its private raw ETL contains
+system-wide kernel events; only offline reports are target-filtered, so fresh
+scope consent/UAC is required. Previous failed captures remain unchanged.
+The page offers a separately
+labeled counter-only diagnostic, never a fake profiling fallback. **Run and analyze**
+now opens an explicit in-app scope decision, waits responsively for your normal
+Windows UAC approval, verifies the real collector, and only then prepares/runs work.
+No elevation occurs on load, polling, or reload; cancellation/expiry prevents
+late approval from reviving a cancelled workload. The normal flow requires no
+copied command or registration path. See
+[Windows setup, privacy scope and current validation limits](docs/windows-attribution.md).
+
 > **Status:** platform orchestration for the four app resources (`server-windows`,
 > `client-windows`, `server-linux`, `client-linux`) is implemented; individual
 > experiment content in `RuntimeMetricsLab.Experiments` continues to grow. See
@@ -26,6 +47,9 @@ traces, and logs produced.
 | `RuntimeMetricsLab.Contracts` | Shared DTOs/interfaces between API and experiments. |
 | `RuntimeMetricsLab.Experiments` | Home for custom `Meter`/instrument code, registered as an OTel meter + trace source in `ServiceDefaults`. |
 | `RuntimeMetricsLab.Experiments.Tests` | xUnit tests for the experiments project. |
+| `RuntimeMetricsLab.Collector` | Authenticated fixed-target Linux profiling companion; no analysis runs with its privileges. |
+| `RuntimeMetricsLab.Analysis` / `RuntimeMetricsLab.Analysis.Worker` | Typed TraceEvent adapter, cost/quality/graph model, and separate unprivileged report process. |
+| `RuntimeMetricsLab.Attribution.Tests` | Deterministic attribution arithmetic, identity, quality and tree regression tests. |
 
 ## Prerequisites
 
@@ -55,18 +79,95 @@ Verified working versions as of this writing (see [Recorded versions](#recorded-
 From the repo root:
 
 ```powershell
-aspire run
+aspire start --isolated --non-interactive
+aspire wait client-linux --non-interactive
+aspire describe --non-interactive
 ```
 
-or, without the Aspire CLI:
+Use the URLs printed by `aspire describe`; do not assume fixed ports in an isolated
+worktree. Stop this workspace's app with `aspire stop --non-interactive`.
+
+## Linux attribution mode
+
+From the isolated worktree, with the existing WSL2 Docker engine reachable:
 
 ```powershell
-dotnet run --project RuntimeMetricsLab.AppHost
+$env:DOCKER_HOST = "tcp://127.0.0.1:2375"
+$env:RuntimeMetricsLab__Mode = "attribution"
+aspire start --isolated --non-interactive
+aspire wait client-linux --non-interactive
+aspire describe --non-interactive
 ```
 
-Or open `RuntimeMetricsLab.sln` and F5 the `RuntimeMetricsLab.AppHost` project. The
-console output prints the Aspire Dashboard URL (typically
-`https://localhost:17xxx`, with a login token on first run) — open it in a browser.
+Open the displayed `client-linux` URL at `/attribution`. Select CPU, allocation
+churn, retention/release, or mixed work, then **Run and analyze**. Reports directly
+show process average cores, estimated method self/inclusive cores, independently
+estimated allocated bytes/rate, and supported per-call costs. Both linked graphs,
+raw counters, interval charts, explanations, cancellation, JSON/ZIP downloads,
+and persistent history are local. See the [walkthrough](docs/attribution-lab.md).
+
+This mode starts the Linux server/client and collector, not the Windows pair.
+The analysis worker is a separate non-root process in the client container.
+Legacy workload entry points are disabled in attribution mode. Capture/job starts
+are idempotent and bypass generic HTTP mutation retries.
+
+**Verified compatibility:** Linux x64, kernel `6.6.87.2-microsoft-standard-WSL2`
+with `CONFIG_USER_EVENTS=y`, glibc 2.39; .NET 10.0.10 from pinned SDK image digest
+`ed034a8bf0b24ded0cbbac07e17825d8e9ebfe21e308191d0f7421eaf5ad4664`;
+`dotnet-trace` 10.0.750501 / OneCollect 0.1.35021; TraceEvent 3.2.8. The tool is
+pinned in `.config\dotnet-tools.json`. Kernel 6.4+ and tracefs/user-events access
+are prerequisites; `--probe` alone does not prove them. No host settings are changed
+to manufacture compatibility.
+
+The private collector is the only profiling-capable service. Docker 29 archive
+setup requires a fixed, fail-closed bootstrap that remounts only its private
+tracefs bind and permanently drops transient `SYS_ADMIN`/`SETPCAP` before starting
+the service. Runtime capabilities are exactly `PERFMON`, `SYS_PTRACE`, and
+`DAC_OVERRIDE`; workload/UI/analysis have none. Only the target PID namespace is
+shared. No Docker socket, host PID namespace, machine-wide profile, arbitrary
+command/provider/PID endpoint, or unrestricted privileged container is used.
+
+**No container CPU or memory quotas are imposed.** Work lasts 1-60 seconds, with
+validated workers, an aggregate 1-256 MiB allocation-payload budget and 1-64 MiB
+retention cap. Capture duration reserves attachment/recovery time; tracer memory,
+artifact size, parser/graph limits, and the separate analysis process have explicit
+safeguards. Sparse, incomplete, unresolved and kernel-loss-unknown evidence remains
+visible instead of being converted to confident-looking costs.
+
+Named volumes `rml-diagnostics-<lab>`, `rml-captures-<lab>`, and `rml-data-<lab>`
+are scoped by AppHost directory. Captures reside under
+`/captures/<capture-id>/trace.nettrace`; job manifests, counter evidence and immutable
+`report-v<revision>.json` files under `/data/jobs/<job-id>/`. They survive
+`aspire stop` and are not checked into git. Existing evidence is never silently
+deleted when storage is full. Moving the checkout selects a different lab-volume
+scope.
+
+For standard mode, stop the attribution app, unset the mode variable in that shell,
+and start again. Do not print raw resource-environment JSON when diagnosing the
+collector: it can contain per-start credentials.
+
+### Attribution validation
+
+After `aspire wait client-linux` succeeds, use its actual loopback URL:
+
+```powershell
+dotnet test .\RuntimeMetricsLab.Attribution.Tests\RuntimeMetricsLab.Attribution.Tests.csproj
+.\tools\Verify-Attribution.ps1 -BaseUrl "http://localhost:<client-port>"
+```
+
+The integration script makes real captures: repeated CPU/allocation calibrations,
+multicore work, mixed waiting, retention/release, idempotency, overlap, cancellation
+and bundle integrity. It writes local evidence under `artifacts\attribution-validation`.
+`Attribution.Tests.Dockerfile` runs both attribution and existing experiment tests
+against the pinned Linux SDK (`docker build -f .\Attribution.Tests.Dockerfile .`).
+For explicitly authorized failure injection, `tools\Verify-AttributionFaults.ps1`
+requires the three loopback URLs, exact worktree lab ID and
+`-AllowContainerFaults`. It exercises credential/input rejection, collector
+admission/final-rename IO faults, storage pressure, phase cancellation, and
+abrupt web/collector restart recovery. It affects only label-verified lab containers
+and cleans up its named fault artifacts.
+The bounded `tools\Attribution.Probe` project/Dockerfile is the low-level compatibility
+probe, not simulated profiling or the normal UI workflow.
 
 ## Topology: four app resources, two platforms each
 

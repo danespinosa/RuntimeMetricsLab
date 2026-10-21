@@ -1,0 +1,140 @@
+@using RuntimeMetricsLab.Contracts.Attribution
+@using System.Globalization
+
+<h3>Process counters and interval rates</h3>
+<p>Intervals use the saved target clock frequency (@Frequency ticks/second), not the UI host's clock.
+    CPU capacity percentages divide by the recorded @ProcessorCount runtime-visible CPUs. Missing/reset observations remain gaps.</p>
+<p>Very short intervals near boundaries amplify counter timing and quantization noise. Use the full-window summary for steady consumption;
+    short spikes are not fixed method costs. The raw ticks and frequency identify every interval length.</p>
+<p>Guide lines:
+    @foreach (var (phase, index) in Phases.Select((phase, index) => (phase, index)))
+    {
+        <span class="me-3">@(index + 1): @phase.Name at @Elapsed(phase.Ticks).ToString("0.##") s</span>
+    }
+</p>
+<div class="row">
+    @foreach (var metric in Metrics)
+    {
+        var points = Points(metric.Name);
+        var available = points.Where(point => point.Value.HasValue).ToArray();
+        <figure class="col-md-6 col-xl-4">
+            <figcaption><strong>@metric.Label</strong><br />Latest: @(points.LastOrDefault().Value?.ToString("0.###") ?? "Unavailable") @metric.Unit</figcaption>
+            @if (available.Length < 2)
+            {
+                <p>Insufficient available observations.</p>
+            }
+            else
+            {
+                var bounds = Bounds(points);
+                <svg viewBox="0 0 440 190" role="img" aria-label="@($"{metric.Label}, {metric.Unit}, monotonic elapsed seconds with phase guides")"
+                     style="width:100%;background:#f7f9fb">
+                    <line x1="72" y1="24" x2="72" y2="150" stroke="#74808c" />
+                    <line x1="72" y1="150" x2="424" y2="150" stroke="#74808c" />
+                    <text x="68" y="30" text-anchor="end" font-size="10">@Axis(bounds.Max)</text>
+                    <text x="68" y="150" text-anchor="end" font-size="10">@Axis(bounds.Min)</text>
+                    <text x="72" y="174" font-size="11">0 s</text>
+                    <text x="424" y="174" text-anchor="end" font-size="11">@Elapsed(Samples[^1].MonotonicTicks).ToString("0.##") s</text>
+                    @foreach (var (phase, index) in Phases.Select((phase, index) => (phase, index)))
+                    {
+                        <g>
+                            <title>@phase.Name at @Elapsed(phase.Ticks).ToString("0.###") seconds</title>
+                            <line x1="@Svg(X(phase.Ticks))" x2="@Svg(X(phase.Ticks))" y1="24" y2="150" stroke="#aab2bb" stroke-dasharray="3,3" />
+                            <text x="@Svg(X(phase.Ticks) + 3)" y="15" font-size="10">@(index + 1)</text>
+                        </g>
+                    }
+                    @foreach (var segment in Segments(points, bounds))
+                    {
+                        <polyline points="@segment" fill="none" stroke="#246ca3" stroke-width="2" />
+                    }
+                </svg>
+            }
+        </figure>
+    }
+</div>
+<p>Last-GC heap, fragmentation, and committed values describe the most recent collection, not instantaneous memory ownership.
+    @GcFreshness</p>
+<details>
+    <summary>Raw counter samples, timestamps, tags and phases (@Samples.Length observations)</summary>
+    <div style="max-height:20rem;overflow:auto">
+        <table class="table table-sm"><thead><tr><th>UTC</th><th>Monotonic tick</th><th>Phase</th><th>Raw instruments</th></tr></thead>
+            <tbody>@foreach (var sample in Samples)
+            {
+                <tr><td>@sample.Utc.ToString("O")</td><td>@sample.MonotonicTicks</td><td>@sample.Phase</td>
+                    <td>@string.Join("; ", sample.Values.Select(value => $"{value.Name}={value.Value:0.###}{value.Unit} [{string.Join(",", value.Tags.Select(tag => $"{tag.Key}={tag.Value}"))}]"))</td></tr>
+            }</tbody>
+        </table>
+    </div>
+</details>
+
+@code {
+    [Parameter, EditorRequired] public RuntimePoint[] Samples { get; set; } = [];
+    [Parameter, EditorRequired] public long Frequency { get; set; }
+    [Parameter, EditorRequired] public int ProcessorCount { get; set; }
+    private static readonly (string Name, string Label, string Unit)[] Metrics =
+    [
+        ("interval.cores", "Interval process CPU consumption", "average cores"),
+        ("interval.capacity", "Interval runtime-visible CPU utilization", "% of recorded CPU capacity"),
+        ("interval.allocation", "Interval approximate managed allocation rate", "B/s"),
+        ("dotnet.process.cpu.time", "Raw cumulative process CPU time", "s"),
+        ("dotnet.gc.heap.total_allocated", "Raw cumulative managed allocation", "B"),
+        ("dotnet.process.memory.working_set", "Process working set", "B"),
+        ("dotnet.gc.last_collection.heap.size", "Last-GC heap size", "B"),
+        ("dotnet.gc.last_collection.heap.fragmentation.size", "Last-GC fragmentation", "B"),
+        ("dotnet.gc.last_collection.memory.committed_size", "Last-GC committed memory", "B"),
+        ("dotnet.gc.collections", "GC collections by generation (sum)", "collections"),
+        ("dotnet.gc.pause.time", "Cumulative GC pause", "s"),
+        ("dotnet.thread_pool.thread.count", "Thread-pool threads", "threads")
+    ];
+    private sealed record Phase(long Ticks, string Name);
+    private Phase[] Phases => Samples.Where((sample, index) => index == 0 || PhaseName(sample.Phase) != PhaseName(Samples[index - 1].Phase))
+        .Select(sample => new Phase(sample.MonotonicTicks, PhaseName(sample.Phase))).ToArray();
+    private static string PhaseName(string phase) => phase switch
+    {
+        "measure-start" or "measuring" => "work", "measure-end" or "recovery" => "recovery",
+        "explicit-gc-after-release" => "release / explicit GC", _ => phase
+    };
+    private string GcFreshness => Samples.Length < 2 ? "Collection freshness unavailable." :
+        AttributionMetrics.Delta(new(Samples[0], Samples[^1], Frequency, true), "dotnet.gc.collections") is > 0
+            ? "A GC collection was observed during these saved phases." : "No GC counter increase was observed; last-GC sizes may predate this capture.";
+    private (long Ticks, double? Value)[] Points(string metric) => Samples.Select((sample, index) =>
+    {
+        double? value;
+        if (metric.StartsWith("interval.", StringComparison.Ordinal))
+        {
+            var window = index == 0 ? null : new MeasurementWindow(Samples[index - 1], sample, Frequency, true);
+            value = window is null ? null : metric == "interval.allocation" ? AttributionMetrics.IntervalAllocationRate(window) :
+                metric == "interval.capacity" ? ProcessorCount > 0 ? AttributionMetrics.IntervalCores(window) * 100 / ProcessorCount : null :
+                AttributionMetrics.IntervalCores(window);
+        }
+        else value = AttributionMetrics.Value(sample, metric);
+        return (sample.MonotonicTicks, value);
+    }).ToArray();
+    private double Elapsed(long ticks) => Frequency > 0 && Samples.Length > 0 ? (ticks - Samples[0].MonotonicTicks) / (double)Frequency : 0;
+    private double X(long ticks) => 72 + (ticks - Samples[0].MonotonicTicks) /
+        (double)Math.Max(1, Samples[^1].MonotonicTicks - Samples[0].MonotonicTicks) * 352;
+    private static string Svg(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+    private static string Axis(double value) => value.ToString(Math.Abs(value) >= 1_000_000 ? "0.##E+0" : "0.###", CultureInfo.InvariantCulture);
+    private static (double Min, double Max) Bounds((long Ticks, double? Value)[] points)
+    {
+        var values = points.Where(point => point.Value.HasValue).Select(point => point.Value!.Value).ToArray();
+        var min = values.Min();
+        var max = values.Max();
+        return (min, max > min ? max : min + 1);
+    }
+    private IEnumerable<string> Segments((long Ticks, double? Value)[] points, (double Min, double Max) bounds)
+    {
+        var segment = new List<string>();
+        foreach (var point in points)
+        {
+            if (point.Value is null)
+            {
+                if (segment.Count > 1) yield return string.Join(" ", segment);
+                segment.Clear();
+                continue;
+            }
+            var y = 150 - (point.Value.Value - bounds.Min) / (bounds.Max - bounds.Min) * 126;
+            segment.Add(Svg(X(point.Ticks)) + "," + Svg(y));
+        }
+        if (segment.Count > 1) yield return string.Join(" ", segment);
+    }
+}
